@@ -718,5 +718,785 @@
       "test_cancel_at_period_end_retains_access",
       "test_reject_unsigned_payment_webhook"
     ]
+  },
+  {
+    "id": "scen_013",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Create a digital gift card issuance, balance transfer, and split-tender checkout service. Shoppers purchase digital gift cards with cryptographic redemption codes, check balances, and pay for orders using a combination of gift card balance and secondary payment method.",
+    "expected_functional_reqs": [
+      "Gift card issuance, activation, and ledger-backed balance inquiry endpoints",
+      "Split-tender checkout deducting available gift card balance first and charging remainder",
+      "Full transaction ledger recording every gift card load, redemption, and refund reversal",
+      "Gift card purchase form, balance checker, and split-payment checkout UI"
+    ],
+    "expected_components": [
+      "giftcard_ledger_schema",
+      "split_tender_service",
+      "giftcard_router",
+      "giftcard_checkout_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create gift_cards and gift_card_transactions tables with balance constraints",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement gift card issuance, balance redemption, and split-tender checkout API",
+        "role": "backend",
+        "depends_on": [
+          "Create gift_cards and gift_card_transactions tables with balance constraints"
+        ]
+      },
+      {
+        "title": "Build gift card redemption widget and split-payment checkout UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement gift card issuance, balance redemption, and split-tender checkout API"
+        ]
+      },
+      {
+        "title": "Audit gift card code entropy and brute-force rate limiting",
+        "role": "security",
+        "depends_on": [
+          "Implement gift card issuance, balance redemption, and split-tender checkout API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Split-tender checkout deducts up to the card balance and computes the exact remaining amount due",
+      "Gift card balance never drops below zero under concurrent redemption attempts",
+      "Canceled orders automatically refund the deducted amount back to the gift card ledger"
+    ],
+    "security_reqs": [
+      "Generate gift card codes using cryptographically secure randomness (secrets module) and store hashed lookup keys",
+      "Rate-limit balance check endpoints to prevent brute-force card code enumeration"
+    ],
+    "test_cases": [
+      "test_split_tender_checkout_partial_giftcard_payment",
+      "test_prevent_negative_giftcard_balance",
+      "test_order_cancellation_restores_giftcard_balance"
+    ]
+  },
+  {
+    "id": "scen_014",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Build a verified-purchaser product review, star rating aggregation, and moderation pipeline. Only customers with a delivered order containing the product can submit a verified review, helpfulness votes are deduplicated per user, and product average ratings update automatically.",
+    "expected_functional_reqs": [
+      "Review submission endpoint verifying completed order history for verified_purchase badge",
+      "Bayesian/weighted average rating and star histogram aggregation per product",
+      "Moderation queue for flagged reviews and one-vote-per-user helpfulness counter",
+      "Product rating breakdown, review filter, and submission form UI"
+    ],
+    "expected_components": [
+      "product_reviews_schema",
+      "rating_aggregator_service",
+      "reviews_moderation_router",
+      "product_reviews_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design product_reviews, review_votes, and moderation_flags schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement verified-purchase review creation, voting, and rating aggregation API",
+        "role": "backend",
+        "depends_on": [
+          "Design product_reviews, review_votes, and moderation_flags schema"
+        ]
+      },
+      {
+        "title": "Create star rating histogram, review list, and moderation UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement verified-purchase review creation, voting, and rating aggregation API"
+        ]
+      },
+      {
+        "title": "Test duplicate review prevention and verified purchase badge logic",
+        "role": "qa",
+        "depends_on": [
+          "Implement verified-purchase review creation, voting, and rating aggregation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Each customer can submit at most one review per product (HTTP 409 on duplicate)",
+      "verified_purchase is set to true only when a delivered order line exists for that user and product",
+      "Rejecting a flagged review removes it from public product rating averages"
+    ],
+    "security_reqs": [
+      "Compute verified_purchase server-side from order records; ignore any client-supplied flag",
+      "Sanitize review title and body text against HTML/script injection"
+    ],
+    "test_cases": [
+      "test_verified_purchase_badge_requires_delivered_order",
+      "test_duplicate_review_per_product_returns_409",
+      "test_moderated_rejected_review_excluded_from_average"
+    ]
+  },
+  {
+    "id": "scen_015",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Implement a dynamic shipping rate calculator, warehouse zone fulfillment router, and package tracking application. Calculate shipping costs by package volumetric weight and destination zone, route orders to the nearest stocked warehouse, and emit shipment tracking milestones.",
+    "expected_functional_reqs": [
+      "Volumetric weight and zone-based shipping rate quote calculator across carrier tiers",
+      "Warehouse fulfillment allocation selecting the closest warehouse with available inventory",
+      "Shipment tracking timeline API recording label_created, in_transit, out_for_delivery, and delivered events",
+      "Checkout shipping estimator and customer package tracking page UI"
+    ],
+    "expected_components": [
+      "shipping_fulfillment_schema",
+      "rate_zone_calculator",
+      "shipment_tracking_router",
+      "tracking_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create warehouses, shipping_zones, shipments, and tracking_events schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement volumetric rate calculator, warehouse allocator, and tracking API",
+        "role": "backend",
+        "depends_on": [
+          "Create warehouses, shipping_zones, shipments, and tracking_events schema"
+        ]
+      },
+      {
+        "title": "Build checkout carrier selector and shipment tracking timeline UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement volumetric rate calculator, warehouse allocator, and tracking API"
+        ]
+      },
+      {
+        "title": "Write unit tests for dimensional weight pricing and warehouse fallback",
+        "role": "qa",
+        "depends_on": [
+          "Implement volumetric rate calculator, warehouse allocator, and tracking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Billable weight equals max(actual_weight, (length * width * height) / dimensional_factor)",
+      "Orders allocate to the lowest-zone-distance warehouse that holds sufficient stock",
+      "Tracking events must follow valid chronological state transitions"
+    ],
+    "security_reqs": [
+      "Require unguessable tracking tokens or authenticated order ownership to view recipient address details",
+      "Validate positive package dimensions and weights to prevent negative shipping quotes"
+    ],
+    "test_cases": [
+      "test_billable_volumetric_weight_calculation",
+      "test_warehouse_allocation_by_stock_and_zone",
+      "test_public_tracking_masks_recipient_pii"
+    ]
+  },
+  {
+    "id": "scen_016",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Build an OAuth 2.0 Authorization Code flow with PKCE (Proof Key for Code Exchange) identity provider service. Support client application registration, authorization code issuance bound to S256 code_challenge, token exchange verifying code_verifier, and OIDC userinfo endpoint.",
+    "expected_functional_reqs": [
+      "OAuth client registration and redirect_uri allowlist management",
+      "GET /oauth/authorize endpoint issuing short-lived single-use authorization codes with PKCE S256 challenge",
+      "POST /oauth/token endpoint verifying SHA-256(code_verifier) == code_challenge and issuing JWT tokens",
+      "OAuth consent screen and connected applications management UI"
+    ],
+    "expected_components": [
+      "oauth_pkce_schema",
+      "pkce_challenge_verifier",
+      "oauth_provider_router",
+      "consent_screen_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design oauth_clients, authorization_codes, and user_consents schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement OAuth2 authorize, PKCE S256 token exchange, and userinfo API",
+        "role": "backend",
+        "depends_on": [
+          "Design oauth_clients, authorization_codes, and user_consents schema"
+        ]
+      },
+      {
+        "title": "Build OAuth scope consent screen and authorized apps settings UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement OAuth2 authorize, PKCE S256 token exchange, and userinfo API"
+        ]
+      },
+      {
+        "title": "Audit redirect_uri exact matching and authorization code replay revocation",
+        "role": "security",
+        "depends_on": [
+          "Implement OAuth2 authorize, PKCE S256 token exchange, and userinfo API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Token exchange with an invalid PKCE code_verifier returns HTTP 400 invalid_grant",
+      "Authorization codes expire after 60 seconds and are invalidated on first use",
+      "Unregistered redirect_uri values are rejected before rendering the consent screen"
+    ],
+    "security_reqs": [
+      "Enforce exact character-for-character redirect_uri matching against registered client allowlists",
+      "Require S256 PKCE challenge method and reject plain or missing code_challenge parameters"
+    ],
+    "test_cases": [
+      "test_pkce_s256_valid_verifier_issues_tokens",
+      "test_pkce_invalid_verifier_rejected",
+      "test_replayed_authorization_code_rejected"
+    ]
+  },
+  {
+    "id": "scen_017",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Develop a passwordless magic-link authentication and account recovery service with anti-enumeration and progressive rate limiting. Users request a single-use cryptographic sign-in link via email, verify within a 10-minute TTL window, and establish an authenticated session.",
+    "expected_functional_reqs": [
+      "POST /auth/magic-link request endpoint generating a 256-bit single-use token hashed with SHA-256",
+      "POST /auth/magic-link/verify endpoint consuming the token within 10 minutes and issuing session credentials",
+      "Progressive IP and email rate limiting blocking brute-force or email bombing",
+      "Passwordless login form and verification landing page UI"
+    ],
+    "expected_components": [
+      "magic_link_schema",
+      "token_issuer_service",
+      "passwordless_auth_router",
+      "magic_link_login_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create users, magic_link_tokens, and auth_rate_limits database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement anti-enumerating magic link issuance and single-use verification API",
+        "role": "backend",
+        "depends_on": [
+          "Create users, magic_link_tokens, and auth_rate_limits database tables"
+        ]
+      },
+      {
+        "title": "Build passwordless sign-in form and token verification redirect UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement anti-enumerating magic link issuance and single-use verification API"
+        ]
+      },
+      {
+        "title": "Test user enumeration resistance, token TTL expiry, and single-use enforcement",
+        "role": "security",
+        "depends_on": [
+          "Implement anti-enumerating magic link issuance and single-use verification API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Magic link request returns identical HTTP 200 response payload whether or not the email is registered",
+      "Issuing a new magic link immediately invalidates any previous unused tokens for that user",
+      "Tokens older than 10 minutes or already consumed return HTTP 401"
+    ],
+    "security_reqs": [
+      "Store only the SHA-256 digest of magic-link tokens in the database, never the raw token",
+      "Prevent user enumeration through uniform response payloads and constant-time token lookup"
+    ],
+    "test_cases": [
+      "test_magic_link_single_use_and_ttl_expiration",
+      "test_new_link_invalidates_previous_pending_links",
+      "test_uniform_response_prevents_email_enumeration"
+    ]
+  },
+  {
+    "id": "scen_018",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Create an Attribute-Based Access Control (ABAC) policy engine and tamper-evident security audit log service. Administrators author JSON access policies evaluating subject attributes (department, clearance), resource sensitivity, and environment context (IP subnet, business hours), while logging every decision.",
+    "expected_functional_reqs": [
+      "ABAC policy CRUD and conflict-resolution rule evaluator (deny-overrides)",
+      "Authorization decision endpoint evaluating subject, resource, action, and environment attributes",
+      "Hash-chained tamper-evident security audit log recording every allow/deny decision",
+      "Policy rule builder and audit log integrity verifier UI"
+    ],
+    "expected_components": [
+      "abac_policy_schema",
+      "abac_evaluation_engine",
+      "tamper_evident_audit_router",
+      "policy_admin_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design abac_policies and hash_chained_audit_logs database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement deny-overrides ABAC evaluator and SHA-256 hash-chain audit logger",
+        "role": "backend",
+        "depends_on": [
+          "Design abac_policies and hash_chained_audit_logs database schema"
+        ]
+      },
+      {
+        "title": "Build ABAC policy editor, decision simulator, and audit chain verifier UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement deny-overrides ABAC evaluator and SHA-256 hash-chain audit logger"
+        ]
+      },
+      {
+        "title": "Verify default-deny fallback and audit log tamper detection",
+        "role": "security",
+        "depends_on": [
+          "Implement deny-overrides ABAC evaluator and SHA-256 hash-chain audit logger"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "When no policy matches or a matching deny rule exists, the evaluator returns DENY",
+      "Each audit log row computes entry_hash = SHA256(prev_hash + timestamp + actor + decision)",
+      "Audit verification endpoint detects any modified or deleted historical log record"
+    ],
+    "security_reqs": [
+      "Enforce default-deny (fail-closed) whenever policy evaluation encounters missing attributes",
+      "Maintain cryptographic SHA-256 hash chaining across all security audit records"
+    ],
+    "test_cases": [
+      "test_abac_deny_overrides_and_default_deny",
+      "test_audit_log_hash_chain_verification",
+      "test_tampered_audit_log_detected_by_verifier"
+    ]
+  },
+  {
+    "id": "scen_019",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Build a service-to-service API token vault with scoped permissions, IP CIDR allowlists, and zero-downtime dual-key rotation. Machine clients authenticate with scoped tokens restricted to allowed IP CIDR blocks, and operators can rotate secrets with a configurable grace window where both old and new keys are valid.",
+    "expected_functional_reqs": [
+      "Service account and scoped token creation with IP CIDR allowlist validation",
+      "Zero-downtime secret rotation maintaining active primary and expiring secondary token hashes",
+      "Token introspection and immediate emergency revocation endpoints",
+      "Service account key vault and rotation countdown UI"
+    ],
+    "expected_components": [
+      "service_token_schema",
+      "cidr_auth_guard",
+      "key_rotation_router",
+      "token_vault_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create service_accounts, service_tokens, and token_access_logs schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement IP CIDR validation guard and dual-key grace-period rotation API",
+        "role": "backend",
+        "depends_on": [
+          "Create service_accounts, service_tokens, and token_access_logs schema"
+        ]
+      },
+      {
+        "title": "Build service token management console and rotation status UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement IP CIDR validation guard and dual-key grace-period rotation API"
+        ]
+      },
+      {
+        "title": "Test CIDR block rejection, scope enforcement, and grace-window expiry",
+        "role": "security",
+        "depends_on": [
+          "Implement IP CIDR validation guard and dual-key grace-period rotation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "During the rotation grace window, both the new primary key and retiring secondary key authenticate successfully",
+      "Requests originating outside the token's configured IP CIDR allowlist receive HTTP 403",
+      "Emergency revocation immediately invalidates both primary and secondary keys"
+    ],
+    "security_reqs": [
+      "Validate IPv4/IPv6 CIDR blocks using Python's ipaddress module and store only hashed token secrets",
+      "Enforce least-privilege scope checks on every protected endpoint"
+    ],
+    "test_cases": [
+      "test_dual_key_rotation_grace_window",
+      "test_ip_cidr_allowlist_blocks_unauthorized_ip",
+      "test_emergency_revocation_invalidates_all_keys"
+    ]
+  },
+  {
+    "id": "scen_020",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Implement a customer privacy consent manager and GDPR/CCPA data subject access request (DSAR) authentication workflow. Users manage granular marketing/analytics consent versions, require step-up re-authentication before exporting a portable JSON archive of their personal data, and request verifiable account erasure.",
+    "expected_functional_reqs": [
+      "Versioned consent ledger recording opt-in/opt-out timestamps and policy versions",
+      "Step-up re-authentication gate required before initiating DSAR data export or account deletion",
+      "Portable user data export generator and anonymizing account erasure workflow",
+      "Privacy center dashboard with consent toggles and DSAR export/delete controls UI"
+    ],
+    "expected_components": [
+      "privacy_consent_schema",
+      "dsar_export_service",
+      "privacy_auth_router",
+      "privacy_center_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design consent_records and dsar_requests database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement consent audit API, step-up auth check, and DSAR export/erasure service",
+        "role": "backend",
+        "depends_on": [
+          "Design consent_records and dsar_requests database schema"
+        ]
+      },
+      {
+        "title": "Create user privacy preferences and DSAR request portal UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement consent audit API, step-up auth check, and DSAR export/erasure service"
+        ]
+      },
+      {
+        "title": "Verify step-up authentication enforcement and complete PII scrubbing on erasure",
+        "role": "security",
+        "depends_on": [
+          "Implement consent audit API, step-up auth check, and DSAR export/erasure service"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Initiating DSAR export or account deletion without a recent (<5 min) step-up auth token returns HTTP 403",
+      "Account erasure scrubs all PII fields and revokes all active sessions while preserving anonymized audit IDs",
+      "Every consent toggle appends an immutable versioned consent history record"
+    ],
+    "security_reqs": [
+      "Require fresh step-up authentication within 5 minutes for data export and account erasure",
+      "Ensure exported data archives contain strictly the authenticated user's own records"
+    ],
+    "test_cases": [
+      "test_dsar_export_requires_fresh_step_up_auth",
+      "test_account_erasure_scrubs_pii_and_revokes_sessions",
+      "test_consent_history_append_only_audit"
+    ]
+  },
+  {
+    "id": "scen_021",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Build a multi-warehouse inventory stock movement ledger and FIFO cost-lot valuation database application. Track inbound purchase receipts as cost layers, fulfill outbound shipments in strict First-In-First-Out (FIFO) order to compute Cost of Goods Sold (COGS), and support cycle-count reconciliation.",
+    "expected_functional_reqs": [
+      "Inbound stock receipt API creating dated FIFO cost lots with unit cost and remaining quantity",
+      "Outbound stock consumption engine depleting oldest open FIFO layers first and computing exact COGS",
+      "Inventory valuation and stock movement audit trail queries per warehouse and SKU",
+      "Warehouse stock ledger, FIFO layer inspector, and valuation report UI"
+    ],
+    "expected_components": [
+      "fifo_inventory_schema",
+      "fifo_cogs_engine",
+      "inventory_ledger_router",
+      "warehouse_valuation_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create skus, fifo_cost_lots, and stock_movements database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement atomic FIFO layer depletion, COGS calculation, and valuation API",
+        "role": "backend",
+        "depends_on": [
+          "Create skus, fifo_cost_lots, and stock_movements database schema"
+        ]
+      },
+      {
+        "title": "Build FIFO cost layer explorer and inventory valuation dashboard UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement atomic FIFO layer depletion, COGS calculation, and valuation API"
+        ]
+      },
+      {
+        "title": "Write multi-layer FIFO depletion and insufficient-stock rollback tests",
+        "role": "qa",
+        "depends_on": [
+          "Implement atomic FIFO layer depletion, COGS calculation, and valuation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Fulfilling an order spanning multiple cost lots depletes the oldest lots first and sums exact weighted COGS",
+      "Outbound requests exceeding total available lot quantities roll back completely with HTTP 409",
+      "Total SKU on-hand quantity always equals the sum of remaining_qty across active FIFO lots"
+    ],
+    "security_reqs": [
+      "Wrap multi-lot FIFO updates in serializable/atomic database transactions",
+      "Require inventory manager privileges for manual cycle-count stock adjustments"
+    ],
+    "test_cases": [
+      "test_fifo_depletes_oldest_cost_lots_and_computes_cogs",
+      "test_insufficient_stock_rolls_back_transaction",
+      "test_inventory_valuation_matches_open_lots"
+    ]
+  },
+  {
+    "id": "scen_022",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Develop a hierarchical organizational budgeting and department expense encumbrance database application. Model nested department trees, allocate fiscal budgets from parent to child cost centers, track pre-approved purchase encumbrances and actual spend, and prevent budget overruns.",
+    "expected_functional_reqs": [
+      "Hierarchical cost-center tree management with parent-to-child budget allocation constraints",
+      "Expense encumbrance and actual settlement workflow checking remaining unencumbered budget",
+      "Rollup SQL queries computing utilized, encumbered, and available budget at any node in the hierarchy",
+      "Department budget tree explorer and expense approval UI"
+    ],
+    "expected_components": [
+      "budget_hierarchy_schema",
+      "encumbrance_rollup_service",
+      "budget_ledger_router",
+      "budget_tree_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design cost_centers, fiscal_budgets, and expense_encumbrances schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement hierarchical budget rollup queries and encumbrance check API",
+        "role": "backend",
+        "depends_on": [
+          "Design cost_centers, fiscal_budgets, and expense_encumbrances schema"
+        ]
+      },
+      {
+        "title": "Create hierarchical budget utilization tree and expense request UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement hierarchical budget rollup queries and encumbrance check API"
+        ]
+      },
+      {
+        "title": "Test child budget sum constraints and overrun prevention",
+        "role": "qa",
+        "depends_on": [
+          "Implement hierarchical budget rollup queries and encumbrance check API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Sum of child cost-center budget allocations cannot exceed the parent department's total budget",
+      "Expense requests exceeding (allocated - encumbered - actual_spent) are rejected with HTTP 422",
+      "Hierarchical rollup endpoint returns accurate subtree totals for any parent cost center"
+    ],
+    "security_reqs": [
+      "Restrict budget reallocation and expense approval to authorized cost-center owners",
+      "Prevent circular parent_id references when updating cost-center hierarchies"
+    ],
+    "test_cases": [
+      "test_child_allocations_cannot_exceed_parent_budget",
+      "test_reject_expense_exceeding_unencumbered_balance",
+      "test_prevent_circular_department_hierarchy"
+    ]
+  },
+  {
+    "id": "scen_023",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Create a clinical trial cohort eligibility screening and longitudinal visit tracking database application. Define protocol inclusion/exclusion criteria (age bounds, biomarker ranges, prior conditions), screen candidate subjects with deterministic audit trails, and track scheduled protocol visits.",
+    "expected_functional_reqs": [
+      "Trial protocol criteria definition and automated subject eligibility evaluator",
+      "Longitudinal study visit schedule generator and CRF (Case Report Form) measurement storage",
+      "Cohort attrition and protocol deviation analytics queries",
+      "Clinical screening worksheet and subject visit timeline UI"
+    ],
+    "expected_components": [
+      "clinical_trial_schema",
+      "eligibility_screener_service",
+      "trial_visits_router",
+      "cohort_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create trial_protocols, subjects, screening_logs, and study_visits schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement deterministic eligibility screener and longitudinal visit tracking API",
+        "role": "backend",
+        "depends_on": [
+          "Create trial_protocols, subjects, screening_logs, and study_visits schema"
+        ]
+      },
+      {
+        "title": "Build subject eligibility checklist and longitudinal visit tracker UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement deterministic eligibility screener and longitudinal visit tracking API"
+        ]
+      },
+      {
+        "title": "Verify pseudonymized subject IDs and screening decision audit logs",
+        "role": "security",
+        "depends_on": [
+          "Implement deterministic eligibility screener and longitudinal visit tracking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Screening evaluator checks all inclusion and exclusion rules and logs the exact failed criteria",
+      "Only subjects with status=eligible can be enrolled into longitudinal visit schedules",
+      "Out-of-window visit measurements are automatically flagged as protocol deviations"
+    ],
+    "security_reqs": [
+      "Store only pseudonymized subject codes in clinical tables; separate identity mapping behind strict RBAC",
+      "Record immutable audit logs for every CRF data modification with reason-for-change"
+    ],
+    "test_cases": [
+      "test_eligibility_screener_flags_exclusion_criteria",
+      "test_ineligible_subject_cannot_enroll",
+      "test_crf_update_creates_audit_log_with_reason"
+    ]
+  },
+  {
+    "id": "scen_024",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Build a fleet vehicle telemetry, fuel consumption analytics, and preventive maintenance scheduling database application. Record trip odometer logs and fuel fill-ups, calculate per-vehicle miles-per-gallon (MPG) efficiency anomalies, and trigger maintenance work orders at mileage intervals.",
+    "expected_functional_reqs": [
+      "Vehicle registry, trip odometer logging, and fuel receipt ingestion APIs",
+      "Monotonic odometer validation and rolling fuel-efficiency (MPG / L-per-100km) analytics queries",
+      "Automated preventive maintenance trigger when vehicle odometer crosses service intervals",
+      "Fleet efficiency leaderboard and maintenance alert dashboard UI"
+    ],
+    "expected_components": [
+      "fleet_telemetry_schema",
+      "fuel_efficiency_analyzer",
+      "fleet_maintenance_router",
+      "fleet_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design vehicles, trip_logs, fuel_entries, and maintenance_schedules schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement odometer validation, fuel efficiency analytics, and service trigger API",
+        "role": "backend",
+        "depends_on": [
+          "Design vehicles, trip_logs, fuel_entries, and maintenance_schedules schema"
+        ]
+      },
+      {
+        "title": "Build fleet MPG analytics chart and preventive service queue UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement odometer validation, fuel efficiency analytics, and service trigger API"
+        ]
+      },
+      {
+        "title": "Test monotonic odometer constraints and mileage threshold triggers",
+        "role": "qa",
+        "depends_on": [
+          "Implement odometer validation, fuel efficiency analytics, and service trigger API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Submitting a trip log with end_odometer < current vehicle odometer returns HTTP 422",
+      "Crossing a 5,000-mile service threshold automatically creates a due maintenance record",
+      "Fleet analytics endpoint computes accurate per-vehicle MPG and flags efficiency drops > 20%"
+    ],
+    "security_reqs": [
+      "Authenticate driver trip submissions and prevent tampering with historical odometer records",
+      "Use parameterized queries for all fleet filtering and date-range aggregation endpoints"
+    ],
+    "test_cases": [
+      "test_reject_decreasing_odometer_reading",
+      "test_mileage_threshold_triggers_maintenance_order",
+      "test_fuel_efficiency_calculation_and_anomaly_flag"
+    ]
+  },
+  {
+    "id": "scen_025",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Implement an academic research citation graph, co-authorship network, and impact metric database application. Store publications, authors, and directed citation edges, prevent cyclic self-citations, and compute author h-index, citation counts, and shortest k-hop citation paths.",
+    "expected_functional_reqs": [
+      "CRUD and batch import for publications, authors, affiliations, and directed citation edges",
+      "DAG validation preventing self-citation or chronological citation cycles",
+      "Graph analytical queries computing author h-index, venue impact, and 2-hop citation neighborhoods",
+      "Citation network explorer and author bibliometrics profile UI"
+    ],
+    "expected_components": [
+      "citation_graph_schema",
+      "bibliometrics_query_service",
+      "citation_network_router",
+      "citation_explorer_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create publications, authors, authorship, and citations graph schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement citation cycle check, h-index calculator, and k-hop graph query API",
+        "role": "backend",
+        "depends_on": [
+          "Create publications, authors, authorship, and citations graph schema"
+        ]
+      },
+      {
+        "title": "Build interactive citation network viewer and author h-index profile UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement citation cycle check, h-index calculator, and k-hop graph query API"
+        ]
+      },
+      {
+        "title": "Write unit tests for h-index math and citation cycle rejection",
+        "role": "qa",
+        "depends_on": [
+          "Implement citation cycle check, h-index calculator, and k-hop graph query API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Adding a self-citation or a citation cycle returns HTTP 422 Unprocessable Entity",
+      "Author h-index endpoint accurately returns the largest h such that h papers have >= h citations",
+      "2-hop neighborhood query returns all directly citing/cited papers and second-degree connections"
+    ],
+    "security_reqs": [
+      "Bound graph traversal depth (max hops <= 3) to prevent recursive query denial-of-service",
+      "Require authenticated curator role for publication and citation graph mutations"
+    ],
+    "test_cases": [
+      "test_author_h_index_calculation",
+      "test_prevent_self_and_cyclic_citations",
+      "test_k_hop_query_respects_max_depth_bound"
+    ]
   }
 ]
