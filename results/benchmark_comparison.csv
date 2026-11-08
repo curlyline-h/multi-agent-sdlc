@@ -1,0 +1,7 @@
+scenario_id,category,baseline_req_f1,multi_req_f1,baseline_dag_f1,multi_dag_f1,baseline_sec_f1,multi_sec_f1,baseline_auc_roc,multi_auc_roc,baseline_latency_s,multi_latency_s,baseline_tokens,multi_tokens,baseline_cost_usd,multi_cost_usd
+scen_003,crud,0.6667,0.8571,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042
+scen_008,rest_api,0.6667,1.0,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042
+scen_012,ecommerce,0.6667,1.0,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042
+scen_020,auth,0.6667,1.0,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042
+scen_024,db_app,0.6667,1.0,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042
+scen_037,auth,0.6667,1.0,0.3333,1.0,0.0,1.0,0.0,0.85,1.45,18.4,1280,8420,0.00032,0.0042

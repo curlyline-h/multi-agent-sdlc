@@ -1,0 +1,66 @@
+{
+  "overall_status": "PASS",
+  "bias_disparity_score": 0.143,
+  "max_performing_category": "rest_api",
+  "min_performing_category": "crud",
+  "is_bias_within_acceptable_threshold": true,
+  "per_category_summary": {
+    "crud": {
+      "mean_multi_req_f1": 0.857,
+      "mean_baseline_req_f1": 0.667,
+      "delta_req_f1": 0.19,
+      "mean_multi_dag_f1": 1.0,
+      "mean_baseline_dag_f1": 0.333,
+      "mean_multi_sec_f1": 1.0
+    },
+    "rest_api": {
+      "mean_multi_req_f1": 1.0,
+      "mean_baseline_req_f1": 0.667,
+      "delta_req_f1": 0.333,
+      "mean_multi_dag_f1": 1.0,
+      "mean_baseline_dag_f1": 0.333,
+      "mean_multi_sec_f1": 1.0
+    },
+    "ecommerce": {
+      "mean_multi_req_f1": 1.0,
+      "mean_baseline_req_f1": 0.667,
+      "delta_req_f1": 0.333,
+      "mean_multi_dag_f1": 1.0,
+      "mean_baseline_dag_f1": 0.333,
+      "mean_multi_sec_f1": 1.0
+    },
+    "auth": {
+      "mean_multi_req_f1": 1.0,
+      "mean_baseline_req_f1": 0.667,
+      "delta_req_f1": 0.333,
+      "mean_multi_dag_f1": 1.0,
+      "mean_baseline_dag_f1": 0.333,
+      "mean_multi_sec_f1": 1.0
+    },
+    "db_app": {
+      "mean_multi_req_f1": 1.0,
+      "mean_baseline_req_f1": 0.667,
+      "delta_req_f1": 0.333,
+      "mean_multi_dag_f1": 1.0,
+      "mean_baseline_dag_f1": 0.333,
+      "mean_multi_sec_f1": 1.0
+    }
+  },
+  "documented_failure_modes": [
+    {
+      "category": "db_app",
+      "failure_pattern": "Deep DAG dependency chains (>4 levels) occasionally collapse into parallel edges in single-agent baseline.",
+      "multi_agent_mitigation": "Task Breakdown Agent performs topological sort with explicit depends_on validation."
+    },
+    {
+      "category": "ecommerce",
+      "failure_pattern": "Single LLM frequently omits race-condition stock reservation constraints during checkout.",
+      "multi_agent_mitigation": "Security and Database Engineer subgraphs inject atomic locking requirements."
+    },
+    {
+      "category": "auth",
+      "failure_pattern": "Single LLM fails to specify refresh-token reuse revocation families.",
+      "multi_agent_mitigation": "Architect and Security agents reference OWASP session management guidelines."
+    }
+  ]
+}

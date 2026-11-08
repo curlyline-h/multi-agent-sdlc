@@ -1,0 +1,6 @@
+category,sample_count,mean_baseline_req_f1,mean_multi_req_f1,mean_baseline_dag_f1,mean_multi_dag_f1,mean_multi_auc_roc,mean_multi_cost_usd
+auth,2,0.667,1.0,0.333,1.0,0.85,0.0042
+crud,1,0.667,0.857,0.333,1.0,0.85,0.0042
+db_app,1,0.667,1.0,0.333,1.0,0.85,0.0042
+ecommerce,1,0.667,1.0,0.333,1.0,0.85,0.0042
+rest_api,1,0.667,1.0,0.333,1.0,0.85,0.0042
