@@ -1,0 +1,991 @@
+[
+  {
+    "id": "scen_026",
+    "category": "crud",
+    "source": "github",
+    "github_issue_ref": "tiangolo/full-stack-fastapi-template#412",
+    "github_labels": [
+      "enhancement",
+      "crud",
+      "backend",
+      "frontend"
+    ],
+    "requirement": "Build a multi-tenant employee directory CRUD module inspired by GitHub issue tiangolo/full-stack-fastapi-template#412. Administrators must be able to create, read, update, soft-delete, and bulk-import employee profiles with department assignments, manager hierarchy links, pagination, and full-text search filters.",
+    "expected_functional_reqs": [
+      "Create, view, update, and soft-delete employee records with department foreign keys",
+      "Support CSV bulk import with row-level validation reporting",
+      "Provide cursor-based pagination and filter by department, role, and active status",
+      "Render responsive directory table and profile drawer in the frontend UI"
+    ],
+    "expected_components": [
+      "database_schema",
+      "backend_api",
+      "csv_import_service",
+      "frontend_directory_ui",
+      "unit_tests"
+    ],
+    "tasks": [
+      {
+        "title": "Design departments and employees relational schema with soft-delete",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement FastAPI CRUD and CSV bulk-import endpoints for employees",
+        "role": "backend",
+        "depends_on": [
+          "Design departments and employees relational schema with soft-delete"
+        ]
+      },
+      {
+        "title": "Build employee directory table, search bar, and edit modal UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement FastAPI CRUD and CSV bulk-import endpoints for employees"
+        ]
+      },
+      {
+        "title": "Write integration tests for employee CRUD and CSV validation",
+        "role": "qa",
+        "depends_on": [
+          "Implement FastAPI CRUD and CSV bulk-import endpoints for employees",
+          "Build employee directory table, search bar, and edit modal UI"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "POST /api/employees creates a validated employee profile and returns HTTP 201",
+      "Soft-deleted employees are excluded from default GET /api/employees queries",
+      "Malformed CSV rows return structured line-number error details without partial writes"
+    ],
+    "security_reqs": [
+      "Enforce role-based access so only HR admins can mutate or bulk-import records",
+      "Sanitize CSV cell values against formula injection (=, +, -, @ prefixes)"
+    ],
+    "test_cases": [
+      "test_create_and_fetch_employee_profile",
+      "test_soft_delete_hides_employee_from_default_list",
+      "test_csv_bulk_import_rejects_formula_injection"
+    ]
+  },
+  {
+    "id": "scen_027",
+    "category": "crud",
+    "source": "github",
+    "github_issue_ref": "nocodb/nocodb#6814",
+    "github_labels": [
+      "feature",
+      "crud",
+      "forms"
+    ],
+    "requirement": "Implement an IT asset and hardware inventory tracking CRUD application adapted from nocodb/nocodb#6814. Support tracking laptops, monitors, and licenses with serial numbers, check-in/check-out assignment history, warranty expiration alerts, and status transitions (available, assigned, maintenance, retired).",
+    "expected_functional_reqs": [
+      "CRUD operations for hardware assets and assignment history logs",
+      "Check-out and check-in state machine preventing double assignment",
+      "Dashboard filter for assets with warranties expiring within 30 days",
+      "Asset detail page displaying full chronological custody audit trail"
+    ],
+    "expected_components": [
+      "asset_db_models",
+      "custody_service",
+      "asset_crud_router",
+      "inventory_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create assets and asset_assignments tables with status constraints",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Develop asset CRUD and check-in/check-out state transition API",
+        "role": "backend",
+        "depends_on": [
+          "Create assets and asset_assignments tables with status constraints"
+        ]
+      },
+      {
+        "title": "Create asset inventory table and custody timeline UI components",
+        "role": "frontend",
+        "depends_on": [
+          "Develop asset CRUD and check-in/check-out state transition API"
+        ]
+      },
+      {
+        "title": "Verify asset assignment conflict handling and warranty filter tests",
+        "role": "qa",
+        "depends_on": [
+          "Create asset inventory table and custody timeline UI components"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Assigning an already checked-out asset returns HTTP 409 Conflict",
+      "Warranty alert endpoint returns only active assets expiring within 30 days",
+      "Every check-in/check-out action appends an immutable custody history record"
+    ],
+    "security_reqs": [
+      "Validate serial number uniqueness and prevent mass-assignment of audit timestamps",
+      "Require authenticated operator identity on all custody state transitions"
+    ],
+    "test_cases": [
+      "test_checkout_available_asset_succeeds",
+      "test_double_checkout_returns_409_conflict",
+      "test_warranty_expiring_filter_accuracy"
+    ]
+  },
+  {
+    "id": "scen_028",
+    "category": "crud",
+    "source": "github",
+    "github_issue_ref": "calcom/cal.com#11205",
+    "github_labels": [
+      "enhancement",
+      "crud",
+      "admin"
+    ],
+    "requirement": "Create a clinic patient appointment and medical intake notes CRUD system adapted from calcom/cal.com#11205. Receptionists and clinicians can manage patient records, schedule or reschedule appointments with conflict detection, attach structured SOAP clinical notes, and filter daily schedules by practitioner.",
+    "expected_functional_reqs": [
+      "CRUD endpoints for patients, practitioners, appointments, and clinical notes",
+      "Time-slot overlap validation preventing double-booked practitioner appointments",
+      "Frontend calendar agenda view and patient intake note editor"
+    ],
+    "expected_components": [
+      "clinic_database_schema",
+      "appointment_scheduler_api",
+      "clinical_notes_router",
+      "agenda_frontend_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Define patients, appointments, and clinical_notes schema with indexes",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Build appointment CRUD API with practitioner time-slot conflict check",
+        "role": "backend",
+        "depends_on": [
+          "Define patients, appointments, and clinical_notes schema with indexes"
+        ]
+      },
+      {
+        "title": "Implement practitioner daily agenda and SOAP note form in Next.js",
+        "role": "frontend",
+        "depends_on": [
+          "Build appointment CRUD API with practitioner time-slot conflict check"
+        ]
+      },
+      {
+        "title": "Audit clinical note endpoints for access control and PII protection",
+        "role": "security",
+        "depends_on": [
+          "Build appointment CRUD API with practitioner time-slot conflict check"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Overlapping appointment requests for the same practitioner return HTTP 422",
+      "Clinicians can create and update SOAP notes linked to completed appointments",
+      "Daily schedule view filters appointments by practitioner and status"
+    ],
+    "security_reqs": [
+      "Restrict clinical SOAP note access strictly to assigned medical practitioners",
+      "Redact sensitive patient identifiers from application error logs"
+    ],
+    "test_cases": [
+      "test_create_appointment_without_overlap",
+      "test_reject_overlapping_practitioner_slot",
+      "test_unauthorized_role_cannot_read_clinical_notes"
+    ]
+  },
+  {
+    "id": "scen_029",
+    "category": "rest_api",
+    "source": "github",
+    "github_issue_ref": "convoy-inc/convoy#1842",
+    "github_labels": [
+      "feature",
+      "api",
+      "webhook"
+    ],
+    "requirement": "Develop an outbound webhook delivery and retry REST API inspired by convoy-inc/convoy#1842. Tenant services register webhook target URLs and event subscriptions, dispatch JSON event payloads signed with HMAC-SHA256, track delivery attempts with exponential backoff metadata, and replay failed deliveries via API.",
+    "expected_functional_reqs": [
+      "CRUD endpoints for webhook subscriptions and secret rotation",
+      "Event ingestion endpoint that queues and signs outbound HTTP deliveries",
+      "Delivery attempt log inspection and manual replay REST endpoint",
+      "Frontend webhook endpoint management and delivery status inspector"
+    ],
+    "expected_components": [
+      "webhook_schema",
+      "hmac_signer_service",
+      "webhook_dispatch_api",
+      "webhook_inspector_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create webhook_endpoints and delivery_attempts database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement HMAC-SHA256 payload signing and webhook dispatch REST API",
+        "role": "backend",
+        "depends_on": [
+          "Create webhook_endpoints and delivery_attempts database tables"
+        ]
+      },
+      {
+        "title": "Build webhook subscription manager and delivery log replay UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement HMAC-SHA256 payload signing and webhook dispatch REST API"
+        ]
+      },
+      {
+        "title": "Add SSRF protection and signature verification unit tests",
+        "role": "security",
+        "depends_on": [
+          "Implement HMAC-SHA256 payload signing and webhook dispatch REST API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Outbound requests include a valid X-Webhook-Signature-256 HMAC header",
+      "Failed deliveries record HTTP status codes and schedule retry timestamps",
+      "POST /api/webhooks/deliveries/{id}/replay re-triggers delivery and logs the attempt"
+    ],
+    "security_reqs": [
+      "Block private/loopback IP ranges (127.0.0.0/8, 10.0.0.0/8, 169.254.169.254) to prevent SSRF",
+      "Store endpoint signing secrets hashed or encrypted and never return plaintext in GET responses"
+    ],
+    "test_cases": [
+      "test_hmac_sha256_signature_generation",
+      "test_webhook_registration_blocks_localhost_ssrf",
+      "test_manual_replay_creates_new_attempt_record"
+    ]
+  },
+  {
+    "id": "scen_030",
+    "category": "rest_api",
+    "source": "github",
+    "github_issue_ref": "kong/kong#10931",
+    "github_labels": [
+      "api",
+      "rest",
+      "rate-limiting"
+    ],
+    "requirement": "Build an API key management and token-bucket rate-limiting REST service adapted from kong/kong#10931. Developers can provision scoped API keys with per-minute and daily quota tiers, validate requests through a fast middleware endpoint, and query real-time quota consumption metrics.",
+    "expected_functional_reqs": [
+      "Generate, revoke, and rotate scoped API keys with configurable rate limits",
+      "Enforce token-bucket rate limiting returning X-RateLimit-* HTTP headers",
+      "Expose usage telemetry aggregation endpoints grouped by key and route"
+    ],
+    "expected_components": [
+      "api_key_models",
+      "rate_limiter_middleware",
+      "quota_telemetry_router",
+      "developer_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design api_keys and usage_counters schema with quota tier columns",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement API key lifecycle router and token-bucket rate limiter",
+        "role": "backend",
+        "depends_on": [
+          "Design api_keys and usage_counters schema with quota tier columns"
+        ]
+      },
+      {
+        "title": "Create developer portal UI for key creation and quota visualization",
+        "role": "frontend",
+        "depends_on": [
+          "Implement API key lifecycle router and token-bucket rate limiter"
+        ]
+      },
+      {
+        "title": "Write automated tests for HTTP 429 rate-limit enforcement",
+        "role": "qa",
+        "depends_on": [
+          "Implement API key lifecycle router and token-bucket rate limiter"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Requests exceeding tier RPM quota receive HTTP 429 with Retry-After header",
+      "API key secrets are shown only once at creation and stored as SHA-256 hashes",
+      "Revoked keys are rejected immediately with HTTP 401"
+    ],
+    "security_reqs": [
+      "Store only cryptographic SHA-256 digests of API keys in the database",
+      "Use constant-time digest comparison to prevent timing side-channel attacks"
+    ],
+    "test_cases": [
+      "test_api_key_hashed_storage_and_one_time_display",
+      "test_rate_limiter_returns_429_when_bucket_exhausted",
+      "test_revoked_key_returns_401_unauthorized"
+    ]
+  },
+  {
+    "id": "scen_031",
+    "category": "rest_api",
+    "source": "github",
+    "github_issue_ref": "unleash/unleash#5490",
+    "github_labels": [
+      "enhancement",
+      "api",
+      "endpoint"
+    ],
+    "requirement": "Implement a feature flag evaluation and progressive rollout REST API inspired by unleash/unleash#5490. Support boolean and multivariate flags, percentage-based deterministic user bucketing, environment-specific overrides (dev, staging, prod), and an audit log of flag state mutations.",
+    "expected_functional_reqs": [
+      "REST CRUD for feature flags, targeting rules, and environment toggles",
+      "Deterministic hashing endpoint evaluating flag state for a given user_id and context",
+      "Immutable audit trail recording every flag toggle and rollout percentage update"
+    ],
+    "expected_components": [
+      "feature_flag_schema",
+      "bucketing_engine",
+      "flag_evaluation_api",
+      "flag_management_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create feature_flags, targeting_rules, and flag_audit_logs tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement deterministic rollout evaluation and flag management API",
+        "role": "backend",
+        "depends_on": [
+          "Create feature_flags, targeting_rules, and flag_audit_logs tables"
+        ]
+      },
+      {
+        "title": "Build feature flag toggle dashboard and rollout slider UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement deterministic rollout evaluation and flag management API"
+        ]
+      },
+      {
+        "title": "Test deterministic bucketing consistency across 1,000 user contexts",
+        "role": "qa",
+        "depends_on": [
+          "Implement deterministic rollout evaluation and flag management API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Evaluating the same user_id and flag key always yields the same bucket result",
+      "A 30% rollout rule enables the flag for approximately 30% of distinct user IDs",
+      "Every mutation to production environment rules creates an audit log entry"
+    ],
+    "security_reqs": [
+      "Separate read-only client SDK evaluation tokens from admin mutation credentials",
+      "Validate targeting attribute payloads against schema injection"
+    ],
+    "test_cases": [
+      "test_deterministic_bucketing_idempotency",
+      "test_percentage_rollout_distribution",
+      "test_client_token_cannot_mutate_flag_state"
+    ]
+  },
+  {
+    "id": "scen_032",
+    "category": "ecommerce",
+    "source": "github",
+    "github_issue_ref": "medusajs/medusa#6120",
+    "github_labels": [
+      "feature",
+      "ecommerce",
+      "cart",
+      "checkout"
+    ],
+    "requirement": "Build a promotional coupon and tiered cart discount calculation engine adapted from medusajs/medusa#6120. Support percentage, fixed-amount, and buy-X-get-Y coupons with minimum subtotal thresholds, per-customer usage caps, expiration windows, and atomic redemption counters during checkout.",
+    "expected_functional_reqs": [
+      "Admin CRUD for discount campaigns, coupon codes, and eligibility rules",
+      "Cart pricing calculator applying valid coupons and returning itemized line discounts",
+      "Atomic coupon redemption tracking preventing overuse beyond maximum redemptions",
+      "Checkout UI coupon input widget with real-time savings breakdown"
+    ],
+    "expected_components": [
+      "coupon_db_schema",
+      "discount_pricing_engine",
+      "checkout_coupon_router",
+      "cart_summary_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design coupons, coupon_redemptions, and cart_items database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement discount rule evaluator and atomic redemption API",
+        "role": "backend",
+        "depends_on": [
+          "Design coupons, coupon_redemptions, and cart_items database tables"
+        ]
+      },
+      {
+        "title": "Build cart summary and promo code application UI components",
+        "role": "frontend",
+        "depends_on": [
+          "Implement discount rule evaluator and atomic redemption API"
+        ]
+      },
+      {
+        "title": "Write boundary and race-condition tests for coupon redemptions",
+        "role": "qa",
+        "depends_on": [
+          "Implement discount rule evaluator and atomic redemption API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Expired or minimum-spend-unmet coupons return HTTP 400 with clear reason codes",
+      "Discount calculation never reduces order total below zero",
+      "Per-customer usage limits block repeat redemption of single-use promo codes"
+    ],
+    "security_reqs": [
+      "Recalculate all cart totals and discounts strictly server-side; ignore client-supplied prices",
+      "Enforce transactional locking when incrementing coupon redemption counts"
+    ],
+    "test_cases": [
+      "test_apply_percentage_and_fixed_coupons",
+      "test_reject_expired_or_under_threshold_coupon",
+      "test_prevent_negative_order_total_and_double_redemption"
+    ]
+  },
+  {
+    "id": "scen_033",
+    "category": "ecommerce",
+    "source": "github",
+    "github_issue_ref": "saleor/saleor#14892",
+    "github_labels": [
+      "ecommerce",
+      "order",
+      "payment"
+    ],
+    "requirement": "Develop an order RMA (Return Merchandise Authorization) and partial refund workflow adapted from saleor/saleor#14892. Customers can request item returns within the 30-day return window with reason codes, warehouse staff inspect and restock returned units, and the system calculates pro-rated tax and discount refunds.",
+    "expected_functional_reqs": [
+      "Customer RMA request submission validating order delivery date and return window",
+      "Admin inspection workflow transitioning RMA from requested to approved, restocked, and refunded",
+      "Pro-rated refund calculation accounting for line-level discounts and taxes",
+      "Customer return portal and admin RMA queue UI"
+    ],
+    "expected_components": [
+      "rma_database_models",
+      "refund_calculator_service",
+      "rma_workflow_router",
+      "returns_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create orders, order_lines, return_requests, and refunds schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Build RMA state machine and pro-rated refund calculation endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Create orders, order_lines, return_requests, and refunds schema"
+        ]
+      },
+      {
+        "title": "Create customer return wizard and admin RMA approval view",
+        "role": "frontend",
+        "depends_on": [
+          "Build RMA state machine and pro-rated refund calculation endpoints"
+        ]
+      },
+      {
+        "title": "Verify cumulative partial refunds cannot exceed original order paid amount",
+        "role": "qa",
+        "depends_on": [
+          "Build RMA state machine and pro-rated refund calculation endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Return requests for items delivered more than 30 days ago are rejected",
+      "Cumulative refunds across multiple partial returns never exceed original payment",
+      "Approved restock actions increment product warehouse inventory atomically"
+    ],
+    "security_reqs": [
+      "Verify order ownership so customers can only initiate RMAs on their own orders",
+      "Require staff privilege and idempotency keys on refund execution endpoints"
+    ],
+    "test_cases": [
+      "test_create_rma_within_30_day_window",
+      "test_prevent_over_refunding_across_partial_returns",
+      "test_unauthorized_user_cannot_access_other_customer_rma"
+    ]
+  },
+  {
+    "id": "scen_034",
+    "category": "ecommerce",
+    "source": "github",
+    "github_issue_ref": "bagisto/bagisto#8930",
+    "github_labels": [
+      "feature",
+      "ecommerce",
+      "inventory"
+    ],
+    "requirement": "Implement a flash-sale inventory reservation and checkout hold system inspired by bagisto/bagisto#8930. When a shopper proceeds to checkout, reserve stock for a 10-minute TTL window to prevent overselling, automatically release expired holds back to available stock, and finalize deduction upon payment confirmation.",
+    "expected_functional_reqs": [
+      "Atomic stock reservation endpoint creating a 10-minute timed hold",
+      "Expiration reaper releasing unconfirmed holds back into sellable inventory",
+      "Checkout confirmation converting active reservation into permanent stock deduction",
+      "Storefront real-time stock badge and countdown timer UI"
+    ],
+    "expected_components": [
+      "inventory_reservation_schema",
+      "stock_hold_service",
+      "checkout_reservation_router",
+      "flash_sale_product_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design products and stock_reservations tables with TTL timestamps",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement atomic reservation, expiration cleanup, and commit API",
+        "role": "backend",
+        "depends_on": [
+          "Design products and stock_reservations tables with TTL timestamps"
+        ]
+      },
+      {
+        "title": "Build flash-sale product card and reservation countdown checkout UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement atomic reservation, expiration cleanup, and commit API"
+        ]
+      },
+      {
+        "title": "Run concurrency and expired-hold reclamation tests",
+        "role": "qa",
+        "depends_on": [
+          "Implement atomic reservation, expiration cleanup, and commit API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Available stock equals physical stock minus active non-expired reservations",
+      "Expired reservations are automatically reclaimed before evaluating new holds",
+      "Confirming an expired reservation returns HTTP 410 Gone"
+    ],
+    "security_reqs": [
+      "Cap maximum active reservations per user session to prevent inventory denial-of-service",
+      "Enforce database-level non-negative stock constraints"
+    ],
+    "test_cases": [
+      "test_reserve_stock_reduces_available_quantity",
+      "test_expired_hold_restores_available_inventory",
+      "test_per_user_reservation_cap_blocks_hoarding"
+    ]
+  },
+  {
+    "id": "scen_035",
+    "category": "auth",
+    "source": "github",
+    "github_issue_ref": "supertokens/supertokens-core#784",
+    "github_labels": [
+      "auth",
+      "security",
+      "jwt"
+    ],
+    "requirement": "Build a JWT authentication and rotating refresh-token session manager with reuse detection adapted from supertokens/supertokens-core#784. Issue short-lived access tokens and family-tracked refresh tokens, detect stolen refresh token replay by invalidating the entire token family, and allow users to revoke active device sessions.",
+    "expected_functional_reqs": [
+      "Login, token refresh, logout, and active device session listing endpoints",
+      "Refresh token rotation with token family tracking and replay breach detection",
+      "Security settings UI listing active sessions with IP/user-agent and remote sign-out"
+    ],
+    "expected_components": [
+      "session_token_schema",
+      "jwt_rotation_service",
+      "auth_session_router",
+      "device_sessions_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create users and refresh_token_families tables with revocation flags",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement Argon2/bcrypt login and refresh token rotation with reuse detection",
+        "role": "backend",
+        "depends_on": [
+          "Create users and refresh_token_families tables with revocation flags"
+        ]
+      },
+      {
+        "title": "Build login screen and active device sessions management UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement Argon2/bcrypt login and refresh token rotation with reuse detection"
+        ]
+      },
+      {
+        "title": "Audit token family revocation on replay and verify JWT claims",
+        "role": "security",
+        "depends_on": [
+          "Implement Argon2/bcrypt login and refresh token rotation with reuse detection"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Presenting an already-rotated refresh token immediately revokes all tokens in that family",
+      "Access tokens expire within 15 minutes and include jti, sub, and role claims",
+      "Users can revoke individual device sessions or sign out everywhere"
+    ],
+    "security_reqs": [
+      "Hash passwords with bcrypt/Argon2 and store only SHA-256 hashes of refresh tokens",
+      "Set HttpOnly, Secure, and SameSite=Strict attributes on refresh token cookies"
+    ],
+    "test_cases": [
+      "test_valid_refresh_token_rotates_and_invalidates_predecessor",
+      "test_replayed_refresh_token_revokes_entire_family",
+      "test_revoke_specific_device_session"
+    ]
+  },
+  {
+    "id": "scen_036",
+    "category": "auth",
+    "source": "github",
+    "github_issue_ref": "ory/kratos#3319",
+    "github_labels": [
+      "auth",
+      "security",
+      "rbac"
+    ],
+    "requirement": "Implement an organization-scoped Role-Based Access Control (RBAC) and team invitation system inspired by ory/kratos#3319. Organization owners can define custom roles with fine-grained resource-action permissions, invite members via signed expiring tokens, and enforce permission checks on API endpoints.",
+    "expected_functional_reqs": [
+      "Multi-tenant organization, role, permission, and membership management APIs",
+      "Cryptographically signed email invitation flow with 48-hour expiration",
+      "FastAPI dependency guard checking user permissions against resource:action policies",
+      "Organization members and role matrix administration UI"
+    ],
+    "expected_components": [
+      "rbac_database_schema",
+      "permission_policy_guard",
+      "org_invitation_router",
+      "role_matrix_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design organizations, roles, permissions, memberships, and invitations schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement RBAC policy evaluation guard and team invitation endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Design organizations, roles, permissions, memberships, and invitations schema"
+        ]
+      },
+      {
+        "title": "Build interactive role-permission matrix and member invite UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement RBAC policy evaluation guard and team invitation endpoints"
+        ]
+      },
+      {
+        "title": "Test privilege escalation prevention and cross-tenant isolation",
+        "role": "security",
+        "depends_on": [
+          "Implement RBAC policy evaluation guard and team invitation endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Users cannot assign a role containing permissions they do not themselves possess",
+      "Expired or already-accepted invitation tokens return HTTP 410 Gone",
+      "Cross-organization resource requests return HTTP 403 Forbidden"
+    ],
+    "security_reqs": [
+      "Prevent privilege escalation during role creation and invitation assignment",
+      "Enforce strict tenant_id scoping on every query in the RBAC guard"
+    ],
+    "test_cases": [
+      "test_rbac_guard_allows_authorized_action",
+      "test_prevent_privilege_escalation_on_role_assignment",
+      "test_cross_tenant_access_returns_403"
+    ]
+  },
+  {
+    "id": "scen_037",
+    "category": "auth",
+    "source": "github",
+    "github_issue_ref": "authelia/authelia#6015",
+    "github_labels": [
+      "auth",
+      "security",
+      "oauth"
+    ],
+    "requirement": "Develop a TOTP Multi-Factor Authentication (MFA) enrollment, verification, and single-use recovery code service adapted from authelia/authelia#6015. Users can enroll an authenticator app via RFC 6238 TOTP URI, verify a 6-digit code to activate MFA, generate 10 hashed backup codes, and enforce step-up MFA on sensitive actions.",
+    "expected_functional_reqs": [
+      "TOTP secret provisioning endpoint returning otpauth:// URI and backup codes",
+      "Step-up MFA verification endpoint validating RFC 6238 codes with replay protection",
+      "Single-use recovery code consumption and regeneration workflow",
+      "Frontend MFA enrollment wizard and step-up challenge modal"
+    ],
+    "expected_components": [
+      "mfa_credentials_schema",
+      "totp_verifier_service",
+      "mfa_router",
+      "mfa_enrollment_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create user_mfa_secrets and mfa_recovery_codes tables with used_at tracking",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement RFC 6238 TOTP verification and backup code redemption API",
+        "role": "backend",
+        "depends_on": [
+          "Create user_mfa_secrets and mfa_recovery_codes tables with used_at tracking"
+        ]
+      },
+      {
+        "title": "Build MFA setup wizard and 6-digit OTP challenge modal UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement RFC 6238 TOTP verification and backup code redemption API"
+        ]
+      },
+      {
+        "title": "Verify TOTP time-step replay rejection and brute-force lockout",
+        "role": "security",
+        "depends_on": [
+          "Implement RFC 6238 TOTP verification and backup code redemption API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "MFA is not marked active until the user successfully verifies their first TOTP code",
+      "A TOTP code accepted once cannot be replayed within the same 30-second window",
+      "Each recovery code can be redeemed exactly once and is marked consumed"
+    ],
+    "security_reqs": [
+      "Lock MFA verification after 5 consecutive failed attempts for 15 minutes",
+      "Store recovery codes hashed and encrypt TOTP shared secrets at rest"
+    ],
+    "test_cases": [
+      "test_totp_enrollment_and_activation_flow",
+      "test_reject_replayed_totp_code_in_same_window",
+      "test_recovery_code_single_use_and_lockout"
+    ]
+  },
+  {
+    "id": "scen_038",
+    "category": "db_app",
+    "source": "github",
+    "github_issue_ref": "timescale/timescaledb#6210",
+    "github_labels": [
+      "database",
+      "sql",
+      "analytics"
+    ],
+    "requirement": "Build an IoT sensor telemetry ingestion and time-bucketed anomaly aggregation database application inspired by timescale/timescaledb#6210. Ingest high-frequency device readings (temperature, pressure, vibration), compute hourly min/max/avg rollups, trigger threshold alert records, and visualize time-series trends.",
+    "expected_functional_reqs": [
+      "Batch telemetry ingestion API validating sensor registration and reading bounds",
+      "Indexed SQL rollup queries computing hourly and daily aggregates per device",
+      "Threshold anomaly detector persisting alert events when readings breach limits",
+      "Interactive telemetry time-series chart and alert feed UI"
+    ],
+    "expected_components": [
+      "telemetry_timeseries_schema",
+      "rollup_query_service",
+      "sensor_ingestion_router",
+      "telemetry_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design devices, sensor_readings, and anomaly_alerts schema with composite indexes",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement batch reading ingestion, anomaly detection, and rollup query API",
+        "role": "backend",
+        "depends_on": [
+          "Design devices, sensor_readings, and anomaly_alerts schema with composite indexes"
+        ]
+      },
+      {
+        "title": "Create device telemetry charts and anomaly alert resolution UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement batch reading ingestion, anomaly detection, and rollup query API"
+        ]
+      },
+      {
+        "title": "Benchmark batch ingestion throughput and rollup query accuracy",
+        "role": "qa",
+        "depends_on": [
+          "Implement batch reading ingestion, anomaly detection, and rollup query API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Batch ingestion of 500 readings completes in a single transaction with anomaly checks",
+      "Hourly rollup endpoint returns accurate min, max, mean, and sample count per device",
+      "Readings exceeding configured device thresholds automatically create alert rows"
+    ],
+    "security_reqs": [
+      "Use parameterized SQLAlchemy queries for all time-range and aggregation filters",
+      "Authenticate device ingestion requests with per-device API tokens"
+    ],
+    "test_cases": [
+      "test_batch_sensor_ingestion_and_threshold_alert",
+      "test_hourly_rollup_aggregation_math",
+      "test_reject_unauthenticated_device_telemetry"
+    ]
+  },
+  {
+    "id": "scen_039",
+    "category": "db_app",
+    "source": "github",
+    "github_issue_ref": "medici-ledger/medici#198",
+    "github_labels": [
+      "database",
+      "sql",
+      "schema"
+    ],
+    "requirement": "Develop an immutable double-entry financial ledger database application adapted from medici-ledger/medici#198. Every journal entry must contain balanced debit and credit postings across asset, liability, revenue, and expense accounts, support trial balance generation, and forbid in-place updates or deletes on posted entries.",
+    "expected_functional_reqs": [
+      "Chart of accounts management and balanced journal entry posting API",
+      "Zero-sum validation ensuring sum(debits) == sum(credits) per transaction",
+      "Trial balance and account statement query endpoints with running balances",
+      "Ledger explorer and journal entry composer UI"
+    ],
+    "expected_components": [
+      "double_entry_ledger_schema",
+      "journal_posting_engine",
+      "ledger_reporting_router",
+      "ledger_explorer_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create accounts, journal_entries, and ledger_postings schema with integrity constraints",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement atomic double-entry posting engine and trial balance endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Create accounts, journal_entries, and ledger_postings schema with integrity constraints"
+        ]
+      },
+      {
+        "title": "Build journal entry form and trial balance report table UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement atomic double-entry posting engine and trial balance endpoints"
+        ]
+      },
+      {
+        "title": "Test unbalanced transaction rejection and append-only ledger immutability",
+        "role": "qa",
+        "depends_on": [
+          "Implement atomic double-entry posting engine and trial balance endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Unbalanced journal entries (debits != credits) are rejected with HTTP 422",
+      "Posted ledger entries are immutable; corrections require a reversing journal entry",
+      "Trial balance endpoint confirms total debits equal total credits across all accounts"
+    ],
+    "security_reqs": [
+      "Use integer minor units (cents) or exact Decimal types to prevent floating-point rounding drift",
+      "Enforce idempotency keys on journal entry creation to prevent duplicate postings"
+    ],
+    "test_cases": [
+      "test_balanced_journal_entry_updates_account_balances",
+      "test_unbalanced_journal_entry_rejected_atomically",
+      "test_idempotency_key_prevents_duplicate_posting"
+    ]
+  },
+  {
+    "id": "scen_040",
+    "category": "db_app",
+    "source": "github",
+    "github_issue_ref": "liquibase/liquibase#5104",
+    "github_labels": [
+      "database",
+      "migration",
+      "schema"
+    ],
+    "requirement": "Create a schema registry and SQL migration versioning tracker database application inspired by liquibase/liquibase#5104. Track applied migrations per environment with SHA-256 script checksums, detect out-of-order or modified migration drift, and provide a dependency graph of schema changesets.",
+    "expected_functional_reqs": [
+      "Register migration changesets with SQL up/down scripts and SHA-256 checksums",
+      "Environment drift detector flagging checksum mismatches or missing prerequisite migrations",
+      "Migration execution history and changeset DAG visualization UI"
+    ],
+    "expected_components": [
+      "migration_registry_schema",
+      "drift_detection_service",
+      "schema_registry_router",
+      "migration_history_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design schema_changesets and environment_migration_runs database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement SHA-256 checksum validation and environment drift detection API",
+        "role": "backend",
+        "depends_on": [
+          "Design schema_changesets and environment_migration_runs database tables"
+        ]
+      },
+      {
+        "title": "Build environment migration status matrix and drift alert UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement SHA-256 checksum validation and environment drift detection API"
+        ]
+      },
+      {
+        "title": "Audit SQL script storage and test checksum tamper detection",
+        "role": "security",
+        "depends_on": [
+          "Implement SHA-256 checksum validation and environment drift detection API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Modifying an already-applied changeset script triggers a checksum drift error",
+      "Applying a changeset whose prerequisite changeset is unapplied returns HTTP 409",
+      "Environment comparison view lists pending and drifted migrations per target DB"
+    ],
+    "security_reqs": [
+      "Verify SHA-256 checksums before marking any changeset run as verified",
+      "Never execute arbitrary user-supplied DDL on the registry host database itself"
+    ],
+    "test_cases": [
+      "test_register_changeset_computes_sha256_checksum",
+      "test_detect_checksum_drift_on_modified_migration",
+      "test_block_out_of_order_changeset_application"
+    ]
+  }
+]
