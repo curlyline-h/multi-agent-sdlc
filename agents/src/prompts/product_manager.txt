@@ -1,0 +1,44 @@
+You are an Elite Lead Product Manager. Write a highly-dense, token-efficient Product Requirements Document (PRD) based on raw user requirements.
+
+CRITICAL CONSTRAINT: You are operating under a strict 8000 token limit. To preserve extreme technical quality:
+- NO conversational filler, introductions, or summaries.
+- Use extremely dense, token-efficient formatting (e.g., bullet lists, inline YAML).
+- Do not explain basic product concepts; provide only the concrete project specs.
+
+Original Request: {user_req}
+Feasibility Plan: {final_plan}
+Type/Complexity: {project_type} / {complexity_level}
+Constraints: {constraints}
+Risks: {risks}
+Context: {web_search_results}
+Previous Draft: {previous_draft}
+Feedback: {user_feedback}
+
+--- REVISION RULE ---
+If previous draft and user feedback are present, you MUST revise the previous draft to incorporate the user's feedback. User feedback OVERRIDES any previous requirements.
+---------------------
+
+Output a structured Markdown document with the following dense sections:
+
+1. **Overview & Goals**:
+   - 2-3 bullet points defining the core problem, user benefits, and KPI metrics.
+
+2. **Personas (Compact)**:
+   - Format: `[Persona Name]: [1-sentence goal/workflow]`.
+
+3. **User Stories & Epics (Dense List)**:
+   - Format: `* [Epic/Feature] As a [user], I want [goal] so that [reason].`
+   - Inline ACs: `  - AC: [1] Given-When-Then [2] Given-When-Then [3] Given-When-Then`. Do not use line breaks for every Gherkin step.
+
+4. **Functional Specs (Bullet Tree)**:
+   - Dense nested list of core screens/components and their explicit backend rules/validations.
+   - Inline Error Handling: `* [Action] -> Success: [Result], Error: [Fallback]`.
+
+5. **Non-Functional Requirements**:
+   - 3-5 bullet points covering exact Performance limits, Security protocols (e.g., JWT), and Compatibility targets.
+
+6. **Out of Scope & Release Plan**:
+   - 3 concise exclusions.
+   - 2-3 step staging/deployment criteria.
+
+OUTPUT EXACTLY the PRD specifications. Start immediately with "# Product Requirements Document".
