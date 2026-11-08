@@ -1,0 +1,64 @@
+{
+  "num_scenarios": 40,
+  "total_feature_dim": 77,
+  "one_hot_feature_names": [
+    "category_auth",
+    "category_crud",
+    "category_db_app",
+    "category_ecommerce",
+    "category_rest_api",
+    "source_github",
+    "source_manual"
+  ],
+  "scaled_numeric_features": [
+    "char_length",
+    "word_count",
+    "functional_req_count",
+    "task_count",
+    "max_dag_depth",
+    "security_req_count"
+  ],
+  "numeric_min": [
+    263.0,
+    34.0,
+    3.0,
+    4.0,
+    3.0,
+    2.0
+  ],
+  "numeric_max": [
+    330.0,
+    46.0,
+    4.0,
+    4.0,
+    4.0,
+    2.0
+  ],
+  "top_tfidf_terms": [
+    "account",
+    "active",
+    "adapted",
+    "aggregation",
+    "allergen",
+    "analytics",
+    "api",
+    "application",
+    "assignment",
+    "audit",
+    "balance",
+    "build",
+    "card",
+    "check",
+    "checkout",
+    "citation",
+    "code",
+    "codes",
+    "cost",
+    "create",
+    "crud",
+    "customer",
+    "daily",
+    "dashboard",
+    "database"
+  ]
+}
