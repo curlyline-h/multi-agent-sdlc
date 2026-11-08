@@ -1,0 +1,27 @@
+# High-Capacity Llama 3.3 70B Versatile Configuration
+system:
+  pipeline_name: "Multi-Agent SDLC — High Capacity"
+  experiment_id: "exp_70b_versatile"
+
+model:
+  provider: "groq"
+  model_name: "llama-3.3-70b-versatile"
+  temperature: 0.0
+  max_tokens: 4000
+  timeout_seconds: 90
+
+orchestration:
+  max_review_loops: 3
+  max_iterations_per_agent: 20
+  human_in_the_loop_approval: true
+
+rag:
+  enabled: true
+  top_k: 5
+  dense_weight: 0.70
+  sparse_weight: 0.30
+
+evaluation:
+  benchmark_split: "test"
+  sim_threshold: 0.30
+

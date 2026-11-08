@@ -1,0 +1,25 @@
+# Lightweight / Fast Baseline Configuration
+system:
+  pipeline_name: "Multi-Agent SDLC — Fast Baseline"
+  experiment_id: "exp_8b_fast"
+
+model:
+  provider: "groq"
+  model_name: "llama-3.1-8b-instant"
+  temperature: 0.5
+  max_tokens: 2048
+  timeout_seconds: 30
+
+orchestration:
+  max_review_loops: 1
+  max_iterations_per_agent: 10
+  human_in_the_loop_approval: false
+
+rag:
+  enabled: false
+  top_k: 3
+
+evaluation:
+  benchmark_split: "val"
+  sim_threshold: 0.25
+

@@ -1,0 +1,20 @@
+# Hyperparameter Search Space for Validation Split Exploration
+search_space:
+  models:
+    - "llama-3.1-8b-instant"
+    - "llama-3.3-70b-versatile"
+  temperatures:
+    - 0.0
+    - 0.2
+    - 0.5
+  max_review_loops:
+    - 1
+    - 2
+    - 3
+  rag_top_k:
+    - 3
+    - 5
+
+optimization_objective: "max_f1_score"
+target_split: "val.json"
+

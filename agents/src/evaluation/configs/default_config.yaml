@@ -1,0 +1,31 @@
+# Default Hyperparameter Configuration for Multi-Agent SDLC Evaluation
+system:
+  pipeline_name: "Multi-Agent SDLC Orchestrator"
+  version: "1.0.0"
+
+model:
+  provider: "groq"
+  model_name: "llama-3.3-70b-versatile"
+  fallback_model: "llama-3.1-8b-instant"
+  temperature: 0.2
+  max_tokens: 4000
+  timeout_seconds: 60
+
+orchestration:
+  max_review_loops: 2
+  max_iterations_per_agent: 15
+  human_in_the_loop_approval: true
+  enable_parallel_execution: true
+
+rag:
+  enabled: true
+  top_k: 5
+  similarity_threshold: 0.65
+  dense_weight: 0.60
+  sparse_weight: 0.40
+
+evaluation:
+  benchmark_split: "test"
+  sim_threshold: 0.30
+  log_tokens_and_cost: true
+
