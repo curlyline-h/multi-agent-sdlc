@@ -1,0 +1,722 @@
+[
+  {
+    "id": "scen_001",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Build a library book catalog and borrower circulation CRUD application. Librarians can add, edit, and archive book titles with ISBN-13 validation, track physical copy availability, issue book loans with due dates, and record returns with overdue fine calculation.",
+    "expected_functional_reqs": [
+      "CRUD operations for books, authors, physical copies, and member loans",
+      "ISBN-13 checksum and format validation on book creation and update",
+      "Loan checkout and check-in workflow updating copy availability status",
+      "Searchable catalog UI with filter by genre, author, and availability"
+    ],
+    "expected_components": [
+      "library_db_schema",
+      "catalog_crud_router",
+      "circulation_service",
+      "catalog_frontend_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design books, copies, members, and loans relational schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement book CRUD and loan checkout/return FastAPI endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Design books, copies, members, and loans relational schema"
+        ]
+      },
+      {
+        "title": "Build catalog search table and loan management modal in Next.js",
+        "role": "frontend",
+        "depends_on": [
+          "Implement book CRUD and loan checkout/return FastAPI endpoints"
+        ]
+      },
+      {
+        "title": "Write unit tests for ISBN validation and overdue fine logic",
+        "role": "qa",
+        "depends_on": [
+          "Implement book CRUD and loan checkout/return FastAPI endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Creating a book with an invalid ISBN-13 returns HTTP 422",
+      "Checking out an unavailable copy returns HTTP 409 Conflict",
+      "Returning a book after its due date computes the daily overdue fine accurately"
+    ],
+    "security_reqs": [
+      "Require librarian role authorization for catalog mutations and fine waivers",
+      "Validate and sanitize search query parameters against SQL injection"
+    ],
+    "test_cases": [
+      "test_create_book_validates_isbn13",
+      "test_checkout_unavailable_copy_returns_409",
+      "test_overdue_return_calculates_fine"
+    ]
+  },
+  {
+    "id": "scen_002",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Create a university course enrollment and gradebook CRUD platform. Academic staff can create courses with capacity limits and prerequisite course links, students can enroll or drop before the add/drop deadline, and instructors can submit weighted assignment grades.",
+    "expected_functional_reqs": [
+      "CRUD for courses, sections, prerequisites, enrollments, and grade entries",
+      "Prerequisite completion and seat capacity verification during enrollment",
+      "Weighted course grade aggregation and GPA calculation endpoint",
+      "Student course registration portal and instructor gradebook UI"
+    ],
+    "expected_components": [
+      "academic_db_schema",
+      "enrollment_service",
+      "gradebook_router",
+      "course_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create courses, prerequisites, enrollments, and grades tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement course CRUD, prerequisite check, and gradebook endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Create courses, prerequisites, enrollments, and grades tables"
+        ]
+      },
+      {
+        "title": "Build student enrollment dashboard and instructor grade grid UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement course CRUD, prerequisite check, and gradebook endpoints"
+        ]
+      },
+      {
+        "title": "Test capacity limits, prerequisite enforcement, and grade permissions",
+        "role": "qa",
+        "depends_on": [
+          "Implement course CRUD, prerequisite check, and gradebook endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Enrolling in a full section or without completed prerequisites returns HTTP 400",
+      "Students can view only their own grades while instructors view their assigned roster",
+      "Dropping a course frees one seat immediately for waitlisted students"
+    ],
+    "security_reqs": [
+      "Enforce strict row-level authorization so students cannot view or alter other students' grades",
+      "Log all grade modifications with instructor user_id and timestamp"
+    ],
+    "test_cases": [
+      "test_enrollment_blocks_missing_prerequisite",
+      "test_section_capacity_limit_enforcement",
+      "test_student_cannot_modify_grades"
+    ]
+  },
+  {
+    "id": "scen_003",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Develop a customer support helpdesk ticketing CRUD system. Customers submit support tickets with priority levels and category tags, support agents assign tickets, post internal notes or public replies, and transition tickets through open, pending, resolved, and closed states.",
+    "expected_functional_reqs": [
+      "CRUD for support tickets, comment threads, tags, and agent assignments",
+      "Ticket status state machine tracking first-response and resolution SLA timestamps",
+      "Internal-only agent notes hidden from customer-facing ticket views",
+      "Support queue dashboard with filters by status, priority, and assignee"
+    ],
+    "expected_components": [
+      "helpdesk_schema",
+      "ticket_workflow_router",
+      "sla_tracker_service",
+      "ticket_queue_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design tickets, ticket_comments, and sla_metrics database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement ticket CRUD, comment visibility filtering, and SLA tracking API",
+        "role": "backend",
+        "depends_on": [
+          "Design tickets, ticket_comments, and sla_metrics database schema"
+        ]
+      },
+      {
+        "title": "Build agent queue workspace and ticket conversation thread UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement ticket CRUD, comment visibility filtering, and SLA tracking API"
+        ]
+      },
+      {
+        "title": "Audit internal note visibility and sanitize rich-text comment payloads",
+        "role": "security",
+        "depends_on": [
+          "Implement ticket CRUD, comment visibility filtering, and SLA tracking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Customer API responses never include comments marked is_internal=true",
+      "First public agent reply records the first_responded_at SLA timestamp",
+      "Reopening a resolved ticket transitions status back to open and clears resolved_at"
+    ],
+    "security_reqs": [
+      "Sanitize ticket body and comment HTML/Markdown against stored XSS",
+      "Prevent customers from enumerating or reading tickets owned by other users"
+    ],
+    "test_cases": [
+      "test_internal_notes_hidden_from_customer",
+      "test_ticket_state_transitions_and_sla_timestamps",
+      "test_comment_xss_sanitization"
+    ]
+  },
+  {
+    "id": "scen_004",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Build a property rental lease and maintenance request CRUD management system. Property managers manage buildings, units, and tenant leases, while tenants submit maintenance requests with severity levels and photo metadata and track repair scheduling through completion.",
+    "expected_functional_reqs": [
+      "CRUD for properties, rental units, active leases, and maintenance work orders",
+      "Lease date overlap validation ensuring one active lease per unit at a time",
+      "Maintenance work order assignment to contractors with cost tracking",
+      "Property manager portfolio view and tenant maintenance portal UI"
+    ],
+    "expected_components": [
+      "property_db_schema",
+      "lease_crud_router",
+      "maintenance_service",
+      "property_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create properties, units, leases, and maintenance_requests schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement lease CRUD with overlap check and maintenance order API",
+        "role": "backend",
+        "depends_on": [
+          "Create properties, units, leases, and maintenance_requests schema"
+        ]
+      },
+      {
+        "title": "Build unit occupancy table and maintenance request tracker UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement lease CRUD with overlap check and maintenance order API"
+        ]
+      },
+      {
+        "title": "Write tests for lease overlap rejection and tenant unit scoping",
+        "role": "qa",
+        "depends_on": [
+          "Implement lease CRUD with overlap check and maintenance order API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Creating an overlapping active lease on the same unit returns HTTP 409",
+      "Tenants can submit maintenance tickets only for units linked to their active lease",
+      "Completed work orders record final repair cost and resolution timestamp"
+    ],
+    "security_reqs": [
+      "Scope tenant queries strictly to their leased unit_id",
+      "Validate uploaded attachment MIME types and file size limits"
+    ],
+    "test_cases": [
+      "test_prevent_overlapping_unit_leases",
+      "test_tenant_can_only_report_for_own_unit",
+      "test_maintenance_status_lifecycle"
+    ]
+  },
+  {
+    "id": "scen_005",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Implement a restaurant menu, table reservation, and kitchen dietary allergen CRUD platform. Managers maintain menu items with ingredient lists and mandatory allergen declarations, guests book dining tables by party size and time slot, and staff filter dishes by allergen restrictions.",
+    "expected_functional_reqs": [
+      "CRUD for menu categories, dishes, ingredients, allergen tags, and table reservations",
+      "Table capacity and dining slot availability validation for party bookings",
+      "Dietary filter endpoint returning dishes safe for selected allergen exclusions",
+      "Interactive digital menu with allergen badges and reservation booking form UI"
+    ],
+    "expected_components": [
+      "restaurant_db_schema",
+      "menu_crud_router",
+      "reservation_allocator",
+      "dining_menu_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Define menu_items, allergens, dining_tables, and reservations schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Build menu CRUD, allergen exclusion filter, and table booking API",
+        "role": "backend",
+        "depends_on": [
+          "Define menu_items, allergens, dining_tables, and reservations schema"
+        ]
+      },
+      {
+        "title": "Create allergen-filterable menu grid and table reservation UI",
+        "role": "frontend",
+        "depends_on": [
+          "Build menu CRUD, allergen exclusion filter, and table booking API"
+        ]
+      },
+      {
+        "title": "Verify allergen exclusion accuracy and table capacity booking constraints",
+        "role": "qa",
+        "depends_on": [
+          "Build menu CRUD, allergen exclusion filter, and table booking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Filtering out peanut or gluten allergens excludes all dishes tagged with those allergens",
+      "Booking a party size larger than any available table capacity returns HTTP 422",
+      "Menu price updates validate positive decimal amounts"
+    ],
+    "security_reqs": [
+      "Restrict menu item and allergen tag edits to authenticated manager accounts",
+      "Rate-limit public reservation creation endpoints against automated spam"
+    ],
+    "test_cases": [
+      "test_allergen_exclusion_filter_accuracy",
+      "test_table_reservation_capacity_matching",
+      "test_unauthorized_user_cannot_edit_menu"
+    ]
+  },
+  {
+    "id": "scen_006",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Build a URL shortener and click analytics REST API service. Users create short aliases with optional custom slugs and expiration timestamps, redirect via HTTP 302 while recording click events (referrer, country code, device category), and query aggregated time-series link analytics.",
+    "expected_functional_reqs": [
+      "POST endpoint creating short links with collision-free Base62 codes or custom slugs",
+      "GET redirect endpoint enforcing expiration checks and logging click metadata",
+      "Analytics REST endpoint returning total clicks, top referrers, and daily histograms",
+      "Link management dashboard and click analytics chart UI"
+    ],
+    "expected_components": [
+      "shortlink_schema",
+      "base62_shortener_service",
+      "redirect_analytics_router",
+      "link_analytics_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design short_links and click_events schema with slug indexes",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement Base62 link creation, 302 redirect, and analytics endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Design short_links and click_events schema with slug indexes"
+        ]
+      },
+      {
+        "title": "Build short link creator and click telemetry dashboard UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement Base62 link creation, 302 redirect, and analytics endpoints"
+        ]
+      },
+      {
+        "title": "Audit target URL validation against open-redirect and javascript: URI abuse",
+        "role": "security",
+        "depends_on": [
+          "Implement Base62 link creation, 302 redirect, and analytics endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Resolving an active short slug returns HTTP 302 Location header and increments click count",
+      "Expired short links return HTTP 410 Gone without redirecting",
+      "Duplicate custom slugs return HTTP 409 Conflict"
+    ],
+    "security_reqs": [
+      "Allow only http:// and https:// destination schemes; block javascript:, data:, and file: URIs",
+      "Hash visitor IP addresses with a daily salt before persisting analytics records"
+    ],
+    "test_cases": [
+      "test_create_and_resolve_short_url",
+      "test_expired_link_returns_410",
+      "test_reject_javascript_scheme_target_url"
+    ]
+  },
+  {
+    "id": "scen_007",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Develop a multi-channel notification dispatch REST API with template rendering and idempotency keys. Client services submit notification requests (email, SMS, in-app) using Mustache/Jinja variable templates, enforce idempotency keys to prevent duplicate sends, and track delivery status.",
+    "expected_functional_reqs": [
+      "CRUD endpoints for versioned notification templates with required variable schemas",
+      "POST /api/notifications/send endpoint enforcing Idempotency-Key header deduplication",
+      "Recipient delivery log and unread in-app notification inbox endpoints",
+      "Template editor and notification delivery monitor UI"
+    ],
+    "expected_components": [
+      "notification_db_schema",
+      "template_renderer",
+      "idempotent_dispatch_router",
+      "notification_center_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create notification_templates, dispatches, and idempotency_keys tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement template rendering and idempotent notification dispatch API",
+        "role": "backend",
+        "depends_on": [
+          "Create notification_templates, dispatches, and idempotency_keys tables"
+        ]
+      },
+      {
+        "title": "Build notification template studio and delivery log viewer UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement template rendering and idempotent notification dispatch API"
+        ]
+      },
+      {
+        "title": "Test idempotency key replay and missing template variable errors",
+        "role": "qa",
+        "depends_on": [
+          "Implement template rendering and idempotent notification dispatch API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Repeating a POST request with the same Idempotency-Key returns the cached dispatch receipt without re-sending",
+      "Missing required template variables return HTTP 422 listing the missing keys",
+      "Recipients can mark in-app notifications as read via PATCH endpoint"
+    ],
+    "security_reqs": [
+      "Use sandboxed template variable substitution to prevent Server-Side Template Injection (SSTI)",
+      "Authenticate calling services via bearer token before dispatching messages"
+    ],
+    "test_cases": [
+      "test_idempotency_key_prevents_duplicate_dispatch",
+      "test_missing_template_variable_returns_422",
+      "test_sandboxed_template_blocks_ssti"
+    ]
+  },
+  {
+    "id": "scen_008",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Create a currency exchange rate aggregation and conversion REST API. Ingest daily reference exchange rates across base currencies, compute triangulated cross-currency conversion quotes with configurable basis-point spread fees, and serve historical rate range queries.",
+    "expected_functional_reqs": [
+      "Exchange rate ingestion and latest quote lookup REST endpoints",
+      "Conversion calculator supporting direct and USD-triangulated currency pairs with fee breakdown",
+      "Historical time-series endpoint returning daily rates and volatility metrics over a date window",
+      "Interactive currency converter and historical rate chart UI"
+    ],
+    "expected_components": [
+      "fx_rates_schema",
+      "triangulation_calculator",
+      "fx_quotes_router",
+      "currency_converter_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design currency_pairs and fx_rate_snapshots database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement rate ingestion, triangulated conversion, and history REST API",
+        "role": "backend",
+        "depends_on": [
+          "Design currency_pairs and fx_rate_snapshots database schema"
+        ]
+      },
+      {
+        "title": "Create currency conversion calculator and historical trend UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement rate ingestion, triangulated conversion, and history REST API"
+        ]
+      },
+      {
+        "title": "Write precision and inverse-rate consistency unit tests",
+        "role": "qa",
+        "depends_on": [
+          "Implement rate ingestion, triangulated conversion, and history REST API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Conversion endpoint returns exact Decimal gross amount, fee amount, net converted amount, and effective rate",
+      "Unsupported ISO 4217 currency codes return HTTP 400 Bad Request",
+      "Historical queries validate start_date <= end_date and cap range to 365 days"
+    ],
+    "security_reqs": [
+      "Reject negative or zero conversion amounts and enforce strict Decimal arithmetic",
+      "Restrict rate ingestion endpoints to authenticated admin/feed credentials"
+    ],
+    "test_cases": [
+      "test_direct_and_triangulated_fx_conversion",
+      "test_reject_negative_conversion_amount",
+      "test_historical_rate_date_range_validation"
+    ]
+  },
+  {
+    "id": "scen_009",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Build a document Malware/PII quarantine and metadata indexing REST API. Users upload text or JSON documents for asynchronous policy scanning (detecting exposed API keys, SSNs, and credit card numbers via Luhn check), quarantine flagged files, and search clean documents.",
+    "expected_functional_reqs": [
+      "Document ingestion REST API computing SHA-256 content hashes and running PII/secret scanners",
+      "Automatic quarantine status assignment when Luhn-valid cards or secret patterns are detected",
+      "Compliance officer review endpoint to redact or permanently purge quarantined documents",
+      "Document upload scanner and quarantine review dashboard UI"
+    ],
+    "expected_components": [
+      "document_scan_schema",
+      "pii_secret_scanner",
+      "quarantine_api_router",
+      "compliance_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create documents and scan_findings tables with quarantine status",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement PII/secret scanner and document quarantine REST endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Create documents and scan_findings tables with quarantine status"
+        ]
+      },
+      {
+        "title": "Build document upload scanner and compliance quarantine UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement PII/secret scanner and document quarantine REST endpoints"
+        ]
+      },
+      {
+        "title": "Verify Luhn credit-card detection and quarantine access restrictions",
+        "role": "security",
+        "depends_on": [
+          "Implement PII/secret scanner and document quarantine REST endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Documents containing AWS keys or Luhn-valid card numbers are marked status=quarantined",
+      "Standard search endpoints return only documents with status=clean",
+      "Redaction endpoint masks detected spans and logs compliance reviewer approval"
+    ],
+    "security_reqs": [
+      "Never persist raw detected secret values in scan finding logs; store masked previews only",
+      "Enforce strict payload size limits and content-type validation on uploads"
+    ],
+    "test_cases": [
+      "test_scanner_quarantines_document_with_secret_or_cc",
+      "test_search_excludes_quarantined_documents",
+      "test_findings_mask_raw_sensitive_tokens"
+    ]
+  },
+  {
+    "id": "scen_010",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Implement a distributed cron job scheduler and execution heartbeat monitor REST API. Services register recurring jobs with cron expressions and expected run durations, worker nodes post start/finish heartbeats, and the API flags missed schedules or hung executions.",
+    "expected_functional_reqs": [
+      "CRUD endpoints for scheduled job definitions, cron expressions, and timeout thresholds",
+      "Heartbeat check-in endpoints (/start, /complete, /fail) recording execution duration and exit logs",
+      "Health monitor endpoint identifying overdue jobs and timed-out running tasks",
+      "Job schedule monitor and execution timeline UI"
+    ],
+    "expected_components": [
+      "job_scheduler_schema",
+      "cron_health_evaluator",
+      "heartbeat_router",
+      "scheduler_monitor_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design scheduled_jobs and job_executions database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement job registration, worker heartbeat, and timeout monitor API",
+        "role": "backend",
+        "depends_on": [
+          "Design scheduled_jobs and job_executions database schema"
+        ]
+      },
+      {
+        "title": "Build cron job health dashboard and execution log viewer UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement job registration, worker heartbeat, and timeout monitor API"
+        ]
+      },
+      {
+        "title": "Write unit tests for cron validation and hung-job timeout detection",
+        "role": "qa",
+        "depends_on": [
+          "Implement job registration, worker heartbeat, and timeout monitor API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Invalid 5-field cron expressions are rejected with HTTP 422 on job registration",
+      "Running executions exceeding max_duration_seconds are flagged as timed_out",
+      "Worker heartbeat complete calls calculate exact execution latency in milliseconds"
+    ],
+    "security_reqs": [
+      "Authenticate worker heartbeat pings using per-job bearer tokens",
+      "Sanitize and truncate worker stderr/stdout log payloads before database storage"
+    ],
+    "test_cases": [
+      "test_register_job_validates_cron_expression",
+      "test_heartbeat_lifecycle_and_timeout_detection",
+      "test_reject_unauthenticated_worker_heartbeat"
+    ]
+  },
+  {
+    "id": "scen_011",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Build a multi-vendor marketplace product catalog, shopping cart, and commission split checkout application. Vendors list products with SKU variants, shoppers combine items from multiple vendors into a single cart, and checkout splits the parent order into vendor sub-orders with platform commission fees.",
+    "expected_functional_reqs": [
+      "Vendor product and SKU variant catalog management with stock counts",
+      "Persistent shopping cart supporting line items across multiple vendors",
+      "Checkout splitter generating parent order, vendor sub-orders, and commission ledger rows",
+      "Marketplace storefront, multi-vendor cart drawer, and vendor payout dashboard UI"
+    ],
+    "expected_components": [
+      "marketplace_db_schema",
+      "order_splitter_service",
+      "cart_checkout_router",
+      "marketplace_storefront_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create vendors, products, carts, orders, and vendor_suborders schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement multi-vendor cart API and checkout commission splitter",
+        "role": "backend",
+        "depends_on": [
+          "Create vendors, products, carts, orders, and vendor_suborders schema"
+        ]
+      },
+      {
+        "title": "Build marketplace product grid, cart drawer, and vendor payout UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement multi-vendor cart API and checkout commission splitter"
+        ]
+      },
+      {
+        "title": "Test order splitting math and cross-vendor access isolation",
+        "role": "qa",
+        "depends_on": [
+          "Implement multi-vendor cart API and checkout commission splitter"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Checking out a cart with items from N vendors creates 1 parent order and N vendor sub-orders",
+      "Sum of vendor net payouts plus platform commissions equals the parent order subtotal",
+      "Vendors can view and fulfill only their own sub-orders"
+    ],
+    "security_reqs": [
+      "Isolate vendor dashboard queries so vendors cannot view other vendors' sales or payouts",
+      "Compute item prices and commission rates exclusively from server-side database records"
+    ],
+    "test_cases": [
+      "test_multi_vendor_checkout_splits_suborders_and_commissions",
+      "test_vendor_cannot_access_other_vendor_suborders",
+      "test_checkout_fails_atomically_on_insufficient_variant_stock"
+    ]
+  },
+  {
+    "id": "scen_012",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Develop a SaaS subscription billing, plan upgrade/downgrade proration, and invoice generation system. Customers subscribe to monthly or annual pricing tiers, mid-cycle tier changes calculate exact daily proration credits or charges, and webhooks update invoice payment states.",
+    "expected_functional_reqs": [
+      "Pricing plan catalog and customer subscription lifecycle API (create, upgrade, downgrade, cancel)",
+      "Mid-cycle proration engine computing unused credit on old plan and remaining charge on new plan",
+      "Automated itemized invoice generation with tax rate application",
+      "Customer billing portal with plan switcher and downloadable invoice table UI"
+    ],
+    "expected_components": [
+      "subscription_billing_schema",
+      "proration_calculator",
+      "billing_invoices_router",
+      "billing_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design plans, subscriptions, invoices, and invoice_items database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement subscription lifecycle and mid-cycle proration calculation API",
+        "role": "backend",
+        "depends_on": [
+          "Design plans, subscriptions, invoices, and invoice_items database schema"
+        ]
+      },
+      {
+        "title": "Build subscription plan comparator and invoice history UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement subscription lifecycle and mid-cycle proration calculation API"
+        ]
+      },
+      {
+        "title": "Verify proration credit/debit math at billing cycle boundaries",
+        "role": "qa",
+        "depends_on": [
+          "Implement subscription lifecycle and mid-cycle proration calculation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Upgrading mid-cycle generates an immediate prorated adjustment invoice for the remaining days",
+      "Canceled subscriptions remain active until current_period_end when cancel_at_period_end=true",
+      "Paid invoices are locked against line-item modifications"
+    ],
+    "security_reqs": [
+      "Verify payment webhook signatures before marking any invoice as paid",
+      "Prevent customers from manipulating billing period timestamps or plan prices in requests"
+    ],
+    "test_cases": [
+      "test_mid_cycle_upgrade_proration_calculation",
+      "test_cancel_at_period_end_retains_access",
+      "test_reject_unsigned_payment_webhook"
+    ]
+  }
+]
