@@ -1,0 +1,374 @@
+[
+  {
+    "id": "scen_003",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Develop a customer support helpdesk ticketing CRUD system. Customers submit support tickets with priority levels and category tags, support agents assign tickets, post internal notes or public replies, and transition tickets through open, pending, resolved, and closed states.",
+    "expected_functional_reqs": [
+      "CRUD for support tickets, comment threads, tags, and agent assignments",
+      "Ticket status state machine tracking first-response and resolution SLA timestamps",
+      "Internal-only agent notes hidden from customer-facing ticket views",
+      "Support queue dashboard with filters by status, priority, and assignee"
+    ],
+    "expected_components": [
+      "helpdesk_schema",
+      "ticket_workflow_router",
+      "sla_tracker_service",
+      "ticket_queue_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design tickets, ticket_comments, and sla_metrics database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement ticket CRUD, comment visibility filtering, and SLA tracking API",
+        "role": "backend",
+        "depends_on": [
+          "Design tickets, ticket_comments, and sla_metrics database schema"
+        ]
+      },
+      {
+        "title": "Build agent queue workspace and ticket conversation thread UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement ticket CRUD, comment visibility filtering, and SLA tracking API"
+        ]
+      },
+      {
+        "title": "Audit internal note visibility and sanitize rich-text comment payloads",
+        "role": "security",
+        "depends_on": [
+          "Implement ticket CRUD, comment visibility filtering, and SLA tracking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Customer API responses never include comments marked is_internal=true",
+      "First public agent reply records the first_responded_at SLA timestamp",
+      "Reopening a resolved ticket transitions status back to open and clears resolved_at"
+    ],
+    "security_reqs": [
+      "Sanitize ticket body and comment HTML/Markdown against stored XSS",
+      "Prevent customers from enumerating or reading tickets owned by other users"
+    ],
+    "test_cases": [
+      "test_internal_notes_hidden_from_customer",
+      "test_ticket_state_transitions_and_sla_timestamps",
+      "test_comment_xss_sanitization"
+    ],
+    "requirement_char_length": 276,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_008",
+    "category": "rest_api",
+    "source": "manual",
+    "requirement": "Create a currency exchange rate aggregation and conversion REST API. Ingest daily reference exchange rates across base currencies, compute triangulated cross-currency conversion quotes with configurable basis-point spread fees, and serve historical rate range queries.",
+    "expected_functional_reqs": [
+      "Exchange rate ingestion and latest quote lookup REST endpoints",
+      "Conversion calculator supporting direct and USD-triangulated currency pairs with fee breakdown",
+      "Historical time-series endpoint returning daily rates and volatility metrics over a date window",
+      "Interactive currency converter and historical rate chart UI"
+    ],
+    "expected_components": [
+      "fx_rates_schema",
+      "triangulation_calculator",
+      "fx_quotes_router",
+      "currency_converter_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design currency_pairs and fx_rate_snapshots database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement rate ingestion, triangulated conversion, and history REST API",
+        "role": "backend",
+        "depends_on": [
+          "Design currency_pairs and fx_rate_snapshots database schema"
+        ]
+      },
+      {
+        "title": "Create currency conversion calculator and historical trend UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement rate ingestion, triangulated conversion, and history REST API"
+        ]
+      },
+      {
+        "title": "Write precision and inverse-rate consistency unit tests",
+        "role": "qa",
+        "depends_on": [
+          "Implement rate ingestion, triangulated conversion, and history REST API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Conversion endpoint returns exact Decimal gross amount, fee amount, net converted amount, and effective rate",
+      "Unsupported ISO 4217 currency codes return HTTP 400 Bad Request",
+      "Historical queries validate start_date <= end_date and cap range to 365 days"
+    ],
+    "security_reqs": [
+      "Reject negative or zero conversion amounts and enforce strict Decimal arithmetic",
+      "Restrict rate ingestion endpoints to authenticated admin/feed credentials"
+    ],
+    "test_cases": [
+      "test_direct_and_triangulated_fx_conversion",
+      "test_reject_negative_conversion_amount",
+      "test_historical_rate_date_range_validation"
+    ],
+    "requirement_char_length": 268,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_012",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Develop a SaaS subscription billing, plan upgrade/downgrade proration, and invoice generation system. Customers subscribe to monthly or annual pricing tiers, mid-cycle tier changes calculate exact daily proration credits or charges, and webhooks update invoice payment states.",
+    "expected_functional_reqs": [
+      "Pricing plan catalog and customer subscription lifecycle API (create, upgrade, downgrade, cancel)",
+      "Mid-cycle proration engine computing unused credit on old plan and remaining charge on new plan",
+      "Automated itemized invoice generation with tax rate application",
+      "Customer billing portal with plan switcher and downloadable invoice table UI"
+    ],
+    "expected_components": [
+      "subscription_billing_schema",
+      "proration_calculator",
+      "billing_invoices_router",
+      "billing_portal_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design plans, subscriptions, invoices, and invoice_items database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement subscription lifecycle and mid-cycle proration calculation API",
+        "role": "backend",
+        "depends_on": [
+          "Design plans, subscriptions, invoices, and invoice_items database schema"
+        ]
+      },
+      {
+        "title": "Build subscription plan comparator and invoice history UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement subscription lifecycle and mid-cycle proration calculation API"
+        ]
+      },
+      {
+        "title": "Verify proration credit/debit math at billing cycle boundaries",
+        "role": "qa",
+        "depends_on": [
+          "Implement subscription lifecycle and mid-cycle proration calculation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Upgrading mid-cycle generates an immediate prorated adjustment invoice for the remaining days",
+      "Canceled subscriptions remain active until current_period_end when cancel_at_period_end=true",
+      "Paid invoices are locked against line-item modifications"
+    ],
+    "security_reqs": [
+      "Verify payment webhook signatures before marking any invoice as paid",
+      "Prevent customers from manipulating billing period timestamps or plan prices in requests"
+    ],
+    "test_cases": [
+      "test_mid_cycle_upgrade_proration_calculation",
+      "test_cancel_at_period_end_retains_access",
+      "test_reject_unsigned_payment_webhook"
+    ],
+    "requirement_char_length": 276,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_020",
+    "category": "auth",
+    "source": "manual",
+    "requirement": "Implement a customer privacy consent manager and GDPR/CCPA data subject access request (DSAR) authentication workflow. Users manage granular marketing/analytics consent versions, require step-up re-authentication before exporting a portable JSON archive of their personal data, and request verifiable account erasure.",
+    "expected_functional_reqs": [
+      "Versioned consent ledger recording opt-in/opt-out timestamps and policy versions",
+      "Step-up re-authentication gate required before initiating DSAR data export or account deletion",
+      "Portable user data export generator and anonymizing account erasure workflow",
+      "Privacy center dashboard with consent toggles and DSAR export/delete controls UI"
+    ],
+    "expected_components": [
+      "privacy_consent_schema",
+      "dsar_export_service",
+      "privacy_auth_router",
+      "privacy_center_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design consent_records and dsar_requests database schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement consent audit API, step-up auth check, and DSAR export/erasure service",
+        "role": "backend",
+        "depends_on": [
+          "Design consent_records and dsar_requests database schema"
+        ]
+      },
+      {
+        "title": "Create user privacy preferences and DSAR request portal UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement consent audit API, step-up auth check, and DSAR export/erasure service"
+        ]
+      },
+      {
+        "title": "Verify step-up authentication enforcement and complete PII scrubbing on erasure",
+        "role": "security",
+        "depends_on": [
+          "Implement consent audit API, step-up auth check, and DSAR export/erasure service"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Initiating DSAR export or account deletion without a recent (<5 min) step-up auth token returns HTTP 403",
+      "Account erasure scrubs all PII fields and revokes all active sessions while preserving anonymized audit IDs",
+      "Every consent toggle appends an immutable versioned consent history record"
+    ],
+    "security_reqs": [
+      "Require fresh step-up authentication within 5 minutes for data export and account erasure",
+      "Ensure exported data archives contain strictly the authenticated user's own records"
+    ],
+    "test_cases": [
+      "test_dsar_export_requires_fresh_step_up_auth",
+      "test_account_erasure_scrubs_pii_and_revokes_sessions",
+      "test_consent_history_append_only_audit"
+    ],
+    "requirement_char_length": 317,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_024",
+    "category": "db_app",
+    "source": "manual",
+    "requirement": "Build a fleet vehicle telemetry, fuel consumption analytics, and preventive maintenance scheduling database application. Record trip odometer logs and fuel fill-ups, calculate per-vehicle miles-per-gallon (MPG) efficiency anomalies, and trigger maintenance work orders at mileage intervals.",
+    "expected_functional_reqs": [
+      "Vehicle registry, trip odometer logging, and fuel receipt ingestion APIs",
+      "Monotonic odometer validation and rolling fuel-efficiency (MPG / L-per-100km) analytics queries",
+      "Automated preventive maintenance trigger when vehicle odometer crosses service intervals",
+      "Fleet efficiency leaderboard and maintenance alert dashboard UI"
+    ],
+    "expected_components": [
+      "fleet_telemetry_schema",
+      "fuel_efficiency_analyzer",
+      "fleet_maintenance_router",
+      "fleet_dashboard_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design vehicles, trip_logs, fuel_entries, and maintenance_schedules schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement odometer validation, fuel efficiency analytics, and service trigger API",
+        "role": "backend",
+        "depends_on": [
+          "Design vehicles, trip_logs, fuel_entries, and maintenance_schedules schema"
+        ]
+      },
+      {
+        "title": "Build fleet MPG analytics chart and preventive service queue UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement odometer validation, fuel efficiency analytics, and service trigger API"
+        ]
+      },
+      {
+        "title": "Test monotonic odometer constraints and mileage threshold triggers",
+        "role": "qa",
+        "depends_on": [
+          "Implement odometer validation, fuel efficiency analytics, and service trigger API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Submitting a trip log with end_odometer < current vehicle odometer returns HTTP 422",
+      "Crossing a 5,000-mile service threshold automatically creates a due maintenance record",
+      "Fleet analytics endpoint computes accurate per-vehicle MPG and flags efficiency drops > 20%"
+    ],
+    "security_reqs": [
+      "Authenticate driver trip submissions and prevent tampering with historical odometer records",
+      "Use parameterized queries for all fleet filtering and date-range aggregation endpoints"
+    ],
+    "test_cases": [
+      "test_reject_decreasing_odometer_reading",
+      "test_mileage_threshold_triggers_maintenance_order",
+      "test_fuel_efficiency_calculation_and_anomaly_flag"
+    ],
+    "requirement_char_length": 290,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_037",
+    "category": "auth",
+    "source": "github",
+    "requirement": "Develop a TOTP Multi-Factor Authentication (MFA) enrollment, verification, and single-use recovery code service adapted from authelia/authelia#6015. Users can enroll an authenticator app via RFC 6238 TOTP URI, verify a 6-digit code to activate MFA, generate 10 hashed backup codes, and enforce step-up MFA on sensitive actions.",
+    "expected_functional_reqs": [
+      "TOTP secret provisioning endpoint returning otpauth:// URI and backup codes",
+      "Step-up MFA verification endpoint validating RFC 6238 codes with replay protection",
+      "Single-use recovery code consumption and regeneration workflow",
+      "Frontend MFA enrollment wizard and step-up challenge modal"
+    ],
+    "expected_components": [
+      "mfa_credentials_schema",
+      "totp_verifier_service",
+      "mfa_router",
+      "mfa_enrollment_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create user_mfa_secrets and mfa_recovery_codes tables with used_at tracking",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement RFC 6238 TOTP verification and backup code redemption API",
+        "role": "backend",
+        "depends_on": [
+          "Create user_mfa_secrets and mfa_recovery_codes tables with used_at tracking"
+        ]
+      },
+      {
+        "title": "Build MFA setup wizard and 6-digit OTP challenge modal UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement RFC 6238 TOTP verification and backup code redemption API"
+        ]
+      },
+      {
+        "title": "Verify TOTP time-step replay rejection and brute-force lockout",
+        "role": "security",
+        "depends_on": [
+          "Implement RFC 6238 TOTP verification and backup code redemption API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "MFA is not marked active until the user successfully verifies their first TOTP code",
+      "A TOTP code accepted once cannot be replayed within the same 30-second window",
+      "Each recovery code can be redeemed exactly once and is marked consumed"
+    ],
+    "security_reqs": [
+      "Lock MFA verification after 5 consecutive failed attempts for 15 minutes",
+      "Store recovery codes hashed and encrypt TOTP shared secrets at rest"
+    ],
+    "test_cases": [
+      "test_totp_enrollment_and_activation_flow",
+      "test_reject_replayed_totp_code_in_same_window",
+      "test_recovery_code_single_use_and_lockout"
+    ],
+    "requirement_char_length": 327,
+    "is_length_outlier": false
+  }
+]

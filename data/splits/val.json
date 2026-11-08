@@ -1,0 +1,372 @@
+[
+  {
+    "id": "scen_005",
+    "category": "crud",
+    "source": "manual",
+    "requirement": "Implement a restaurant menu, table reservation, and kitchen dietary allergen CRUD platform. Managers maintain menu items with ingredient lists and mandatory allergen declarations, guests book dining tables by party size and time slot, and staff filter dishes by allergen restrictions.",
+    "expected_functional_reqs": [
+      "CRUD for menu categories, dishes, ingredients, allergen tags, and table reservations",
+      "Table capacity and dining slot availability validation for party bookings",
+      "Dietary filter endpoint returning dishes safe for selected allergen exclusions",
+      "Interactive digital menu with allergen badges and reservation booking form UI"
+    ],
+    "expected_components": [
+      "restaurant_db_schema",
+      "menu_crud_router",
+      "reservation_allocator",
+      "dining_menu_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Define menu_items, allergens, dining_tables, and reservations schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Build menu CRUD, allergen exclusion filter, and table booking API",
+        "role": "backend",
+        "depends_on": [
+          "Define menu_items, allergens, dining_tables, and reservations schema"
+        ]
+      },
+      {
+        "title": "Create allergen-filterable menu grid and table reservation UI",
+        "role": "frontend",
+        "depends_on": [
+          "Build menu CRUD, allergen exclusion filter, and table booking API"
+        ]
+      },
+      {
+        "title": "Verify allergen exclusion accuracy and table capacity booking constraints",
+        "role": "qa",
+        "depends_on": [
+          "Build menu CRUD, allergen exclusion filter, and table booking API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Filtering out peanut or gluten allergens excludes all dishes tagged with those allergens",
+      "Booking a party size larger than any available table capacity returns HTTP 422",
+      "Menu price updates validate positive decimal amounts"
+    ],
+    "security_reqs": [
+      "Restrict menu item and allergen tag edits to authenticated manager accounts",
+      "Rate-limit public reservation creation endpoints against automated spam"
+    ],
+    "test_cases": [
+      "test_allergen_exclusion_filter_accuracy",
+      "test_table_reservation_capacity_matching",
+      "test_unauthorized_user_cannot_edit_menu"
+    ],
+    "requirement_char_length": 284,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_014",
+    "category": "ecommerce",
+    "source": "manual",
+    "requirement": "Build a verified-purchaser product review, star rating aggregation, and moderation pipeline. Only customers with a delivered order containing the product can submit a verified review, helpfulness votes are deduplicated per user, and product average ratings update automatically.",
+    "expected_functional_reqs": [
+      "Review submission endpoint verifying completed order history for verified_purchase badge",
+      "Bayesian/weighted average rating and star histogram aggregation per product",
+      "Moderation queue for flagged reviews and one-vote-per-user helpfulness counter",
+      "Product rating breakdown, review filter, and submission form UI"
+    ],
+    "expected_components": [
+      "product_reviews_schema",
+      "rating_aggregator_service",
+      "reviews_moderation_router",
+      "product_reviews_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design product_reviews, review_votes, and moderation_flags schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement verified-purchase review creation, voting, and rating aggregation API",
+        "role": "backend",
+        "depends_on": [
+          "Design product_reviews, review_votes, and moderation_flags schema"
+        ]
+      },
+      {
+        "title": "Create star rating histogram, review list, and moderation UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement verified-purchase review creation, voting, and rating aggregation API"
+        ]
+      },
+      {
+        "title": "Test duplicate review prevention and verified purchase badge logic",
+        "role": "qa",
+        "depends_on": [
+          "Implement verified-purchase review creation, voting, and rating aggregation API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Each customer can submit at most one review per product (HTTP 409 on duplicate)",
+      "verified_purchase is set to true only when a delivered order line exists for that user and product",
+      "Rejecting a flagged review removes it from public product rating averages"
+    ],
+    "security_reqs": [
+      "Compute verified_purchase server-side from order records; ignore any client-supplied flag",
+      "Sanitize review title and body text against HTML/script injection"
+    ],
+    "test_cases": [
+      "test_verified_purchase_badge_requires_delivered_order",
+      "test_duplicate_review_per_product_returns_409",
+      "test_moderated_rejected_review_excluded_from_average"
+    ],
+    "requirement_char_length": 278,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_031",
+    "category": "rest_api",
+    "source": "github",
+    "requirement": "Implement a feature flag evaluation and progressive rollout REST API inspired by unleash/unleash#5490. Support boolean and multivariate flags, percentage-based deterministic user bucketing, environment-specific overrides (dev, staging, prod), and an audit log of flag state mutations.",
+    "expected_functional_reqs": [
+      "REST CRUD for feature flags, targeting rules, and environment toggles",
+      "Deterministic hashing endpoint evaluating flag state for a given user_id and context",
+      "Immutable audit trail recording every flag toggle and rollout percentage update"
+    ],
+    "expected_components": [
+      "feature_flag_schema",
+      "bucketing_engine",
+      "flag_evaluation_api",
+      "flag_management_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Create feature_flags, targeting_rules, and flag_audit_logs tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement deterministic rollout evaluation and flag management API",
+        "role": "backend",
+        "depends_on": [
+          "Create feature_flags, targeting_rules, and flag_audit_logs tables"
+        ]
+      },
+      {
+        "title": "Build feature flag toggle dashboard and rollout slider UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement deterministic rollout evaluation and flag management API"
+        ]
+      },
+      {
+        "title": "Test deterministic bucketing consistency across 1,000 user contexts",
+        "role": "qa",
+        "depends_on": [
+          "Implement deterministic rollout evaluation and flag management API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Evaluating the same user_id and flag key always yields the same bucket result",
+      "A 30% rollout rule enables the flag for approximately 30% of distinct user IDs",
+      "Every mutation to production environment rules creates an audit log entry"
+    ],
+    "security_reqs": [
+      "Separate read-only client SDK evaluation tokens from admin mutation credentials",
+      "Validate targeting attribute payloads against schema injection"
+    ],
+    "test_cases": [
+      "test_deterministic_bucketing_idempotency",
+      "test_percentage_rollout_distribution",
+      "test_client_token_cannot_mutate_flag_state"
+    ],
+    "requirement_char_length": 284,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_032",
+    "category": "ecommerce",
+    "source": "github",
+    "requirement": "Build a promotional coupon and tiered cart discount calculation engine adapted from medusajs/medusa#6120. Support percentage, fixed-amount, and buy-X-get-Y coupons with minimum subtotal thresholds, per-customer usage caps, expiration windows, and atomic redemption counters during checkout.",
+    "expected_functional_reqs": [
+      "Admin CRUD for discount campaigns, coupon codes, and eligibility rules",
+      "Cart pricing calculator applying valid coupons and returning itemized line discounts",
+      "Atomic coupon redemption tracking preventing overuse beyond maximum redemptions",
+      "Checkout UI coupon input widget with real-time savings breakdown"
+    ],
+    "expected_components": [
+      "coupon_db_schema",
+      "discount_pricing_engine",
+      "checkout_coupon_router",
+      "cart_summary_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design coupons, coupon_redemptions, and cart_items database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement discount rule evaluator and atomic redemption API",
+        "role": "backend",
+        "depends_on": [
+          "Design coupons, coupon_redemptions, and cart_items database tables"
+        ]
+      },
+      {
+        "title": "Build cart summary and promo code application UI components",
+        "role": "frontend",
+        "depends_on": [
+          "Implement discount rule evaluator and atomic redemption API"
+        ]
+      },
+      {
+        "title": "Write boundary and race-condition tests for coupon redemptions",
+        "role": "qa",
+        "depends_on": [
+          "Implement discount rule evaluator and atomic redemption API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Expired or minimum-spend-unmet coupons return HTTP 400 with clear reason codes",
+      "Discount calculation never reduces order total below zero",
+      "Per-customer usage limits block repeat redemption of single-use promo codes"
+    ],
+    "security_reqs": [
+      "Recalculate all cart totals and discounts strictly server-side; ignore client-supplied prices",
+      "Enforce transactional locking when incrementing coupon redemption counts"
+    ],
+    "test_cases": [
+      "test_apply_percentage_and_fixed_coupons",
+      "test_reject_expired_or_under_threshold_coupon",
+      "test_prevent_negative_order_total_and_double_redemption"
+    ],
+    "requirement_char_length": 290,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_036",
+    "category": "auth",
+    "source": "github",
+    "requirement": "Implement an organization-scoped Role-Based Access Control (RBAC) and team invitation system inspired by ory/kratos#3319. Organization owners can define custom roles with fine-grained resource-action permissions, invite members via signed expiring tokens, and enforce permission checks on API endpoints.",
+    "expected_functional_reqs": [
+      "Multi-tenant organization, role, permission, and membership management APIs",
+      "Cryptographically signed email invitation flow with 48-hour expiration",
+      "FastAPI dependency guard checking user permissions against resource:action policies",
+      "Organization members and role matrix administration UI"
+    ],
+    "expected_components": [
+      "rbac_database_schema",
+      "permission_policy_guard",
+      "org_invitation_router",
+      "role_matrix_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design organizations, roles, permissions, memberships, and invitations schema",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement RBAC policy evaluation guard and team invitation endpoints",
+        "role": "backend",
+        "depends_on": [
+          "Design organizations, roles, permissions, memberships, and invitations schema"
+        ]
+      },
+      {
+        "title": "Build interactive role-permission matrix and member invite UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement RBAC policy evaluation guard and team invitation endpoints"
+        ]
+      },
+      {
+        "title": "Test privilege escalation prevention and cross-tenant isolation",
+        "role": "security",
+        "depends_on": [
+          "Implement RBAC policy evaluation guard and team invitation endpoints"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Users cannot assign a role containing permissions they do not themselves possess",
+      "Expired or already-accepted invitation tokens return HTTP 410 Gone",
+      "Cross-organization resource requests return HTTP 403 Forbidden"
+    ],
+    "security_reqs": [
+      "Prevent privilege escalation during role creation and invitation assignment",
+      "Enforce strict tenant_id scoping on every query in the RBAC guard"
+    ],
+    "test_cases": [
+      "test_rbac_guard_allows_authorized_action",
+      "test_prevent_privilege_escalation_on_role_assignment",
+      "test_cross_tenant_access_returns_403"
+    ],
+    "requirement_char_length": 303,
+    "is_length_outlier": false
+  },
+  {
+    "id": "scen_040",
+    "category": "db_app",
+    "source": "github",
+    "requirement": "Create a schema registry and SQL migration versioning tracker database application inspired by liquibase/liquibase#5104. Track applied migrations per environment with SHA-256 script checksums, detect out-of-order or modified migration drift, and provide a dependency graph of schema changesets.",
+    "expected_functional_reqs": [
+      "Register migration changesets with SQL up/down scripts and SHA-256 checksums",
+      "Environment drift detector flagging checksum mismatches or missing prerequisite migrations",
+      "Migration execution history and changeset DAG visualization UI"
+    ],
+    "expected_components": [
+      "migration_registry_schema",
+      "drift_detection_service",
+      "schema_registry_router",
+      "migration_history_ui"
+    ],
+    "tasks": [
+      {
+        "title": "Design schema_changesets and environment_migration_runs database tables",
+        "role": "database_engineer",
+        "depends_on": []
+      },
+      {
+        "title": "Implement SHA-256 checksum validation and environment drift detection API",
+        "role": "backend",
+        "depends_on": [
+          "Design schema_changesets and environment_migration_runs database tables"
+        ]
+      },
+      {
+        "title": "Build environment migration status matrix and drift alert UI",
+        "role": "frontend",
+        "depends_on": [
+          "Implement SHA-256 checksum validation and environment drift detection API"
+        ]
+      },
+      {
+        "title": "Audit SQL script storage and test checksum tamper detection",
+        "role": "security",
+        "depends_on": [
+          "Implement SHA-256 checksum validation and environment drift detection API"
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      "Modifying an already-applied changeset script triggers a checksum drift error",
+      "Applying a changeset whose prerequisite changeset is unapplied returns HTTP 409",
+      "Environment comparison view lists pending and drifted migrations per target DB"
+    ],
+    "security_reqs": [
+      "Verify SHA-256 checksums before marking any changeset run as verified",
+      "Never execute arbitrary user-supplied DDL on the registry host database itself"
+    ],
+    "test_cases": [
+      "test_register_changeset_computes_sha256_checksum",
+      "test_detect_checksum_drift_on_modified_migration",
+      "test_block_out_of_order_changeset_application"
+    ],
+    "requirement_char_length": 294,
+    "is_length_outlier": false
+  }
+]
