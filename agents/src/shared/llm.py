@@ -1,5 +1,10 @@
 import os
 import time
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 from langchain_groq import ChatGroq
 
 # Transient HTTP errors that are safe to retry with a short backoff
@@ -12,7 +17,7 @@ def get_llm(temperature: float = 0.1, max_tokens: int = 4000):
     Reads the model from the environment variable LLM_MODEL.
     Uses LLM_PROVIDER to determine the backend (default: groq, alternative: ollama).
     """
-    model_name = os.getenv("LLM_MODEL", "llama-3.1-70b-versatile")
+    model_name = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
     provider = os.getenv("LLM_PROVIDER", "groq").lower()
     
     if provider == "ollama":
