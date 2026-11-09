@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: multi-agent-sdlc-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./database.sqlite
+      - key: CHECKPOINT_DB_PATH
+        value: checkpoints.sqlite
+      - key: CORS_ORIGINS
+        value: https://multi-agent-sdlc.vercel.app,http://localhost:3000
