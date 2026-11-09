@@ -1,0 +1,7 @@
+\section{Deployment and Infrastructure Architecture}
+The multi-agent platform is deployed across a decoupled cloud topology:
+\begin{itemize}
+    \item \textbf{Backend Deployment:} Hosted on Render running FastAPI under Uvicorn, orchestrated with Docker containerization. Asynchronous WebSocket channels facilitate live token streaming and telemetry broadcasting.
+    \item \textbf{Frontend Deployment:} Hosted on Vercel leveraging Next.js with Turbopack, providing sub-second page transitions and reactive state synchronization via Zustand.
+    \item \textbf{Persistence Layer:} State checkpoints and thread states are persisted via an asynchronous SQLite checkpointer (\texttt{AsyncSqliteSaver}), allowing workflows to pause during approval gates and resume reliably without data loss.
+\end{itemize}

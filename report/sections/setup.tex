@@ -1,0 +1,8 @@
+\section{System Setup and Reproduction Guide}
+Reproduction of our pipeline requires Python 3.10+ and Node.js 18+:
+\begin{enumerate}
+    \item \textbf{Environment Initialization:} Clone repository and install dependencies via \texttt{pip install -r requirements.txt}.
+    \item \textbf{API Keys:} Configure \texttt{GROQ\_API\_KEY} for high-throughput inference across open-weights models.
+    \item \textbf{Backend Execution:} Execute \texttt{uvicorn backend.main:app --port 8000}.
+    \item \textbf{Frontend UI:} Navigate to \texttt{frontend/}, execute \texttt{npm install} followed by \texttt{npm run dev}, and access \texttt{http://localhost:3000}.
+\end{enumerate}
