@@ -1,0 +1,73 @@
+\documentclass[10pt,journal,compsoc]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cite}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10}
+}
+
+\title{Multi-Agent System for Software Development Lifecycle (SDLC) Automation}
+
+\author{Hania~Zahra,
+        Hamza~Abbas,
+        and~Muhammad~Abdullah%
+\thanks{All authors contributed equally to the development, evaluation, and documentation of this multi-agent software engineering framework.}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Automating the software development lifecycle (SDLC) using cooperative Large Language Model (LLM) agents provides a scalable pathway toward autonomous specification, architecture synthesis, code implementation, and quality assurance. In this work, we present an end-to-end multi-agent orchestration architecture built with LangGraph, FastAPI, and Next.js. We evaluate our 11-agent pipeline against a single-agent baseline using a 40-scenario stratified benchmark dataset across five application categories (CRUD, REST APIs, e-commerce, authentication, and database-driven applications). Our empirical findings demonstrate that the multi-agent system achieves an overall F1-score of 0.88, significantly outperforming the single-agent baseline (F1 = 0.65), with an AUC-ROC of 0.89 in automated vulnerability detection.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Multi-Agent Systems, Software Development Lifecycle, Large Language Models, LangGraph, RAG, Code Generation, Quality Assurance.
+\end{IEEEkeywords}
+
+\section{Introduction}
+The development of modern software applications demands coordinated efforts across requirements elicitation, architectural design, component-level coding, and rigorous security verification. Single-agent LLM systems frequently struggle with contextual drift, hallucinated dependencies, and architectural inconsistencies over prolonged development pipelines. We introduce a directed cyclical multi-agent graph with human-in-the-loop gates that mitigates these limitations.
+
+\input{sections/data_collection}
+\input{sections/eda}
+\input{sections/methodology}
+\input{sections/architecture}
+\input{sections/hyperparameters}
+\input{sections/results}
+\input{sections/error_analysis}
+\input{sections/bias_check}
+\input{sections/deployment}
+\input{sections/setup}
+
+\section{Contribution Statement}
+\begin{table}[h]
+\centering
+\caption{Team Contribution Breakdown by Deliverable}
+\label{tab:contributions}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Member} & \textbf{D1} & \textbf{D2} & \textbf{D3} & \textbf{Total Commits} \\
+\midrule
+Hania Zahra & 5 & 11 & 10 & 26 \\
+Hamza Abbas & 4 & 12 & 9 & 25 \\
+Muhammad Abdullah & 4 & 12 & 10 & 26 \\
+\midrule
+\textbf{Total} & \textbf{13} & \textbf{35} & \textbf{29} & \textbf{77} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

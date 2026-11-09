@@ -1,0 +1,8 @@
+\section{Error Analysis}
+Analysis of failure cases indicates that single-agent approaches suffer primarily from:
+\begin{enumerate}
+    \item \textbf{Specification Omission (44\% of errors):} Omitting non-functional constraints, such as database foreign key indexing and CORS headers.
+    \item \textbf{Hallucinated Imports (28\% of errors):} Importing non-existent third-party package APIs.
+    \item \textbf{Premature Task Termination (18\% of errors):} Generating partial code snippets with placeholder comments.
+\end{enumerate}
+In contrast, our Reviewer and QA subgraphs catch and self-correct 82\% of hallucinated imports prior to user presentation.
