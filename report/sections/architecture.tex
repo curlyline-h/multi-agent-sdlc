@@ -1,0 +1,12 @@
+\section{Agent Architecture and Graph Orchestration}
+The platform orchestrates eleven autonomous agents managed by a parent LangGraph state machine:
+\begin{enumerate}
+    \item \textbf{Planning Agent:} Interacts with the user, solicits clarifications, and establishes initial project scope.
+    \item \textbf{Product Manager Agent:} Translates requirements into comprehensive, verifiable PRDs.
+    \item \textbf{System Architect Agent:} Generates technical design specifications, entity schemas, and API interface contracts.
+    \item \textbf{Task Breakdown Agent:} Decomposes the architectural blueprint into a Directed Acyclic Graph (DAG) of atomic sub-tasks.
+    \item \textbf{Dispatcher Node:} Dynamically schedules tasks whose prerequisite dependencies are satisfied.
+    \item \textbf{Domain Engineers (Backend, Frontend, Database):} Implement functional source code adhering to design specifications.
+    \item \textbf{Quality \& Security Gatekeepers (Reviewer, QA, Security):} Review code against clean-code guidelines, execute automated unit tests, and perform static security scans.
+    \item \textbf{DevOps Agent:} Formulates container specifications, infrastructure-as-code manifests, and deployment pipelines.
+\end{enumerate}

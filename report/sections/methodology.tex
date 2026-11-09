@@ -1,0 +1,4 @@
+\section{Methodology}
+Our methodology adopts a specialized division of labor inspired by modern Agile software engineering teams. Rather than tasking a monolithic LLM with specification, synthesis, and verification simultaneously, we decompose the lifecycle into discrete, typed stages connected via a directed state graph.
+
+Each agent possesses private state memory, a domain-optimized system prompt, and access to scoped tools (e.g., file system inspection, AST parsing, AST diffing, and dependency validation). Transition between agents is mediated by an intelligent Dispatcher node capable of dynamically reprioritizing tasks when downstream tests fail.

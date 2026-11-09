@@ -1,0 +1,7 @@
+\section{Hyperparameter Optimization and Sensitivity}
+During validation split evaluation, we systematically explored four core hyperparameters:
+\begin{itemize}
+    \item \textbf{Inference Temperature:} Evaluated at $T \in \{0.0, 0.2, 0.5, 0.7\}$. For structured code synthesis, $T=0.1$ yielded the optimal balance between deterministic syntax adherence and contextual adaptability.
+    \item \textbf{Maximum Review Loops:} Constrained to $K \in \{1, 2, 3\}$. Setting $K=2$ provided optimal bug remediation without introducing recursive regression loops.
+    \item \textbf{RAG Dense Retrieval Top-$k$:} Evaluated at $k \in \{3, 5, 10\}$. Setting $k=5$ maximized relevant API context while minimizing context-window overhead.
+\end{itemize}
