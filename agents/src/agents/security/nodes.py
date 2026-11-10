@@ -29,7 +29,7 @@ from agents.src.shared.tools import (
 )
 
 # ---------------------------------------------------------------------------
-_llm = get_llm(temperature=0.1, max_tokens=4000)
+_llm = get_llm(temperature=0.1, max_tokens=2500)
 
 class Vulnerability(BaseModel):
     title: str = Field(description="CVE or brief title of the vulnerability")
@@ -160,14 +160,15 @@ def analyze_vulnerabilities_node(state: SecurityState) -> dict:
             messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
     
     try:
-        # Find the content containing the JSON
+        # Find the content containing the JSON (only from assistant responses in messages[2:])
         content = ""
-        for msg in reversed(messages):
+        for msg in reversed(messages[2:]):
             if hasattr(msg, "content") and isinstance(msg.content, str) and "```json" in msg.content:
                 content = msg.content
                 break
-        if not content:
-            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+        if not content and len(messages) > 2:
+            last_ai = next((m for m in reversed(messages[2:]) if getattr(m, "type", "ai") == "ai" and getattr(m, "content", "")), None)
+            content = last_ai.content if last_ai else ""
             
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
@@ -183,6 +184,21 @@ def analyze_vulnerabilities_node(state: SecurityState) -> dict:
         print(f"[Security Agent] JSON parsing failed: {e}. Defaulting to approval.")
         parsed_response = SecurityAnalysis(report="Security scan completed cleanly.", is_approved=True, vulnerabilities=[])
     
+    try:
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "09_security_audit_report.md").write_text(
+            f"# Application Security (SAST & SCA) Audit Report\n\n"
+            f"- **Security Gate Approved:** `{parsed_response.is_approved}`\n\n"
+            f"## SAST Scan Results\n```\n{state.sast_scan_results}\n```\n\n"
+            f"## Dependency Vulnerability Scan (SCA)\n```\n{state.dependency_vulnerabilities}\n```\n\n"
+            f"## Security Analysis Summary\n{parsed_response.report}\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
     return {
         "security_report": parsed_response.report,
         "security_approved": parsed_response.is_approved,
@@ -239,7 +255,7 @@ def enforce_security_gate_node(state: SecurityState) -> dict:
             new_tasks.append({
                 "id": f"task-sec-{int(time.time())}",
                 "title": f"Address Security Vulnerabilities (Attempt {int(time.time())})",
-                "description": f"The Security Agent found issues.\n\nIssues:\n{state.security_comments}\n\nMitigation:\n{v_mit}",
+                "description": f"The Security Agent found issues.\n\nIssues:\n{state.security_report}\n\nMitigation:\n{v_mit}",
                 "assignee_role": "backend", # Usually backend handles sec fixes
                 "dependencies": [],
                 "priority": 1 # Security fixes are top priority

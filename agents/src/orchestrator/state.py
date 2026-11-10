@@ -29,3 +29,5 @@ class WorkflowState(BaseModel):
     reviewer_approved: bool = Field(default=False, description="Whether static analysis passed")
     security_approved: bool = Field(default=False, description="Whether security scan passed")
     github_repo_name: str = Field(default="", description="The repository name for GitHub API calls")
+    jira_epic_key: str = Field(default="", description="Jira Epic key created for this workflow")
+    jira_ticket_keys: List[str] = Field(default_factory=list, description="Jira child ticket keys created for this workflow")

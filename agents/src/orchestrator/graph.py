@@ -26,7 +26,18 @@ _subgraph_counters = {}
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 async def _run_subgraph_with_interrupts(subgraph, initial_input, config):
+    import asyncio
+    from backend.websocket_manager import ws_manager
+    from backend.telemetry import set_active_agent_role, effective_role_from_thread
+    try:
+        ws_manager.main_loop = asyncio.get_running_loop()
+    except Exception:
+        pass
+
     thread_id = config["configurable"]["thread_id"]
+    role_for_thread = effective_role_from_thread(thread_id)
+    if role_for_thread:
+        set_active_agent_role(role_for_thread)
     if thread_id not in _subgraph_counters:
         _subgraph_counters[thread_id] = 0
         
@@ -133,11 +144,12 @@ async def pm_phase_a_stage(state: WorkflowState) -> dict:
     }
 
 async def architect_stage(state: WorkflowState) -> dict:
+    effective_prd = state.prd if (state.prd and len(state.prd.strip()) > 50) else state.user_req
     out = await _run_subgraph_with_interrupts(
         architect_subgraph,
         {
-            "user_req": state.prd,
-            "prd": state.prd,
+            "user_req": state.user_req or effective_prd,
+            "prd": effective_prd,
             "project_name": state.project_name
         },
         {"configurable": {"thread_id": f"{state.workflowId}-architect"}}
@@ -159,12 +171,36 @@ async def task_breakdown_stage(state: WorkflowState) -> dict:
     workflow_tasks = out.get("workflow_tasks", [])
     
     import json
+    from pathlib import Path
     try:
         with open("tasks-proj.json", "w", encoding="utf-8") as f:
             json.dump(workflow_tasks, f, indent=4)
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "04_task_breakdown.json").write_text(json.dumps(workflow_tasks, indent=2), encoding="utf-8")
+        md_lines = [
+            f"# Task Breakdown & Topological DAG ({state.project_name or state.projectId})",
+            "",
+            "| # | Task ID | Role | Priority | Summary | Dependencies |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- |",
+        ]
+        for idx, t in enumerate(workflow_tasks):
+            deps = ", ".join(t.get("dependencies", [])) or "None"
+            md_lines.append(
+                f"| {idx+1} | `{t.get('id', f'task-{idx+1}')}` | `{t.get('assignee_role', '')}` | "
+                f"{t.get('priority', 3)} | **{t.get('title', '')}** — {t.get('description', '')[:120]} | {deps} |"
+            )
+        (docs_dir / "04_task_breakdown.md").write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     except Exception as e:
         with open("debug_tasks.txt", "w") as f:
             f.write(str(e))
+
+    try:
+        from backend.telemetry import sync_workflow_tasks_to_db
+        await sync_workflow_tasks_to_db(state.projectId, workflow_tasks, [])
+    except Exception as e:
+        print(f"[DB SYNC] Warning: could not sync initial tasks to DB: {e}")
 
     return {
         "workflow_tasks": workflow_tasks,
@@ -173,7 +209,7 @@ async def task_breakdown_stage(state: WorkflowState) -> dict:
     }
 
 async def pm_phase_b_stage(state: WorkflowState) -> dict:
-    await _run_subgraph_with_interrupts(
+    out = await _run_subgraph_with_interrupts(
         pm_phase_b_subgraph,
         {
             "workflow_tasks": state.workflow_tasks,
@@ -183,7 +219,26 @@ async def pm_phase_b_stage(state: WorkflowState) -> dict:
         },
         {"configurable": {"thread_id": f"{state.workflowId}-pm_b"}}
     )
-    return {}
+    jira_epic_key = out.get("jira_epic_key", "") if isinstance(out, dict) else ""
+    jira_ticket_keys = out.get("jira_ticket_keys", []) if isinstance(out, dict) else []
+
+    # Enrich workflow_tasks with Jira keys (SCRUM-XX) and create GitHub Issues (#N) for issue-driven execution
+    enriched_tasks = list(state.workflow_tasks)
+    try:
+        from agents.src.shared.issue_tracker import ensure_github_repo_and_issues
+        enriched_tasks = ensure_github_repo_and_issues(
+            state.github_repo_name, enriched_tasks, jira_epic_key=jira_epic_key
+        )
+        from backend.telemetry import sync_workflow_tasks_to_db
+        await sync_workflow_tasks_to_db(state.projectId, enriched_tasks, state.completed_task_titles)
+    except Exception as e:
+        print(f"[IssueTracker] Warning enriching issues in pm_phase_b_stage: {e}")
+
+    return {
+        "workflow_tasks": enriched_tasks,
+        "jira_epic_key": jira_epic_key,
+        "jira_ticket_keys": jira_ticket_keys,
+    }
 
 # ===========================================================================
 # DISPATCHER LOOP & WRAPPERS
@@ -193,6 +248,29 @@ async def pm_phase_b_stage(state: WorkflowState) -> dict:
 _dispatcher_iteration_count: dict = {}
 _dispatcher_last_dispatch: dict = {}
 MAX_DISPATCHER_ITERATIONS = 50
+
+def _norm(x: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]", "", str(x).lower())
+
+
+def _dep_satisfied(dep, completed: set, all_tasks: list) -> bool:
+    """A dependency is satisfied if it matches a completed title/id (case-insensitive),
+    or if it matches no known task at all (unresolvable references must not block forever)."""
+    if dep in completed:
+        return True
+    nd = _norm(dep)
+    known = False
+    for t in all_tasks:
+        if nd in (_norm(t.get("title", "")), _norm(t.get("id", ""))):
+            known = True
+            if t.get("title", "") in completed:
+                return True
+    if not known:
+        print(f"[DISPATCHER] Unknown dependency {dep!r}; treating as satisfied.")
+        return True
+    return False
+
 
 def dispatcher_stage(state: WorkflowState) -> dict:
     """
@@ -224,10 +302,13 @@ def dispatcher_stage(state: WorkflowState) -> dict:
             continue
             
         deps = t.get("dependencies", [])
-        if all(dep in completed for dep in deps):
+        if all(_dep_satisfied(dep, completed, all_tasks) for dep in deps):
             ready_tasks.append(t)
             
     if not ready_tasks:
+        pending = [t.get("title", "") for t in all_tasks if t.get("title", "") not in completed]
+        if pending:
+            print(f"[DISPATCHER][ERROR] No ready tasks but {len(pending)} pending (dependency cycle?): {pending}")
         # Either all tasks are done, or there's an unresolvable dependency cycle
         print(f"[DISPATCHER][{_time.strftime('%H:%M:%S')}] No ready tasks remaining. Ending workflow.")
         return {"active_role": "", "active_tasks": []}
@@ -299,9 +380,20 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
     # returning stale results from a previous run.
     task_titles = sorted(t.get("title", "") for t in state.active_tasks)
     batch_hash = hashlib.md5("::".join(task_titles).encode()).hexdigest()[:8]
-    unique_thread_id = f"{state.workflowId}-{role_name}-{batch_hash}"
+    base_thread_id = f"{state.workflowId}-{role_name}-{batch_hash}"
+    attempt = _subgraph_batch_counter.get(base_thread_id, 0)
+    _subgraph_batch_counter[base_thread_id] = attempt + 1
+    # A retried batch needs a fresh checkpoint, otherwise the finished one returns stale output
+    unique_thread_id = base_thread_id if attempt == 0 else f"{base_thread_id}-retry{attempt}"
 
     print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] Executing {role_name} with thread_id='{unique_thread_id}' for tasks: {task_titles}")
+
+    # ── Claim Issue(s) on Jira (In Progress) & GitHub Issues (#N) ─────────
+    try:
+        from agents.src.shared.issue_tracker import transition_and_comment_on_claim
+        transition_and_comment_on_claim(state.github_repo_name, state.active_tasks, role_name)
+    except Exception as e:
+        print(f"[IssueTracker] Claim hook warning: {e}")
 
     # Send only active_tasks to the sub-agent
     out = await _run_subgraph_with_interrupts(
@@ -324,14 +416,26 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
     
     # Check if the agent rejected the work (e.g. reviewer failed)
     # If the sub-agent outputs `code_review_approved: False` or `all_tests_passed: False`, we don't complete the task
+    # UNLESS we already spawned a remediation round for this gate, to guarantee bounded convergence.
+    _gate_prefix = {"qa": "task-bugfix-", "reviewer": "task-review-", "security": "task-sec-"}.get(role_name)
+    already_remediated = bool(_gate_prefix) and any(
+        str(t.get("id", "")).startswith(_gate_prefix) for t in state.workflow_tasks
+    )
     is_rejected = False
-    if "code_review_approved" in out and not out["code_review_approved"]:
-        is_rejected = True
-    if "all_tests_passed" in out and not out["all_tests_passed"]:
-        is_rejected = True
-    if "security_approved" in out and not out["security_approved"]:
-        is_rejected = True
+    if not already_remediated:
+        if "code_review_approved" in out and not out["code_review_approved"]:
+            is_rejected = True
+        if "all_tests_passed" in out and not out["all_tests_passed"]:
+            is_rejected = True
+        if "security_approved" in out and not out["security_approved"]:
+            is_rejected = True
         
+    spawned_preview = (out.get("new_workflow_tasks") or []) if (not already_remediated and isinstance(out, dict)) else []
+    if is_rejected and not spawned_preview:
+        # Rejected with no remediation task: re-dispatching the identical batch would trip the loop guard
+        # and END the whole workflow, abandoning other pending tasks. Close it out, loudly.
+        print(f"[SUBGRAPH][WARNING] {role_name} rejected work but spawned no remediation task; closing batch as UNRESOLVED.")
+        is_rejected = False
     if not is_rejected:
         # Mark tasks as completed
         for t in state.active_tasks:
@@ -340,23 +444,68 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
                 new_completed.append(title)
         print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} APPROVED. Completed: {[t.get('title','') for t in state.active_tasks]}")
     else:
-        print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} REJECTED. Tasks NOT marked complete.")
+        print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} REJECTED (spawning remediation round). Tasks NOT marked complete yet.")
             
-    # Pull any newly spawned tasks (e.g., bug fixes, PR revisions)
-    if "new_workflow_tasks" in out and out["new_workflow_tasks"]:
-        new_global_tasks.extend(out["new_workflow_tasks"])
-        print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} spawned {len(out['new_workflow_tasks'])} new task(s).")
+    # Pull any newly spawned tasks (e.g., bug fixes, PR revisions) only if not already remediated
+    if not already_remediated and "new_workflow_tasks" in out and out["new_workflow_tasks"]:
+        # Cap spawned tasks to at most 3 per gate to prevent exponential fan-out
+        spawned = out["new_workflow_tasks"][:3]
+        new_global_tasks.extend(spawned)
+        print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} spawned {len(spawned)} remediation task(s).")
         
+    # Tasks that still failed lint/tests after all retries get ONE targeted fix task (never a fix of a fix)
+    if isinstance(out, dict) and out.get("failed_tasks"):
+        import hashlib as _hl
+        for ft in out["failed_tasks"]:
+            orig = ft.get("title", "")
+            if not orig or orig.startswith("Fix: "):
+                continue
+            fix_id = "task-fix-" + _hl.md5(orig.encode()).hexdigest()[:6]
+            if any(t.get("id") == fix_id for t in new_global_tasks):
+                continue
+            role_of = (state.active_tasks[0].get("assignee_role", "backend") if state.active_tasks else "backend")
+            new_global_tasks.append({
+                "id": fix_id,
+                "title": f"Fix: {orig}",
+                "description": f"The previous attempt for '{orig}' still failed checks. Fix the code so lint/tests pass. Errors:\n{ft.get('errors', '')}",
+                "assignee_role": role_of,
+                "priority": 1,
+                "dependencies": [],
+            })
+            print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name}: '{orig}' still failing; queued fix task {fix_id}.")
+
     # Capture PR number if Developer agents created one
     if "active_pr_number" in out and out["active_pr_number"]:
         active_pr_number = out["active_pr_number"]
+
+    # ── Update Jira Tickets (Done) & Close GitHub Issues (#N) ──────────────
+    try:
+        from agents.src.shared.issue_tracker import finalize_issues_after_subgraph
+        finalize_issues_after_subgraph(
+            state.github_repo_name,
+            role_name,
+            state.active_tasks,
+            is_rejected=is_rejected,
+            pr_number=active_pr_number,
+        )
+    except Exception as e:
+        print(f"[IssueTracker] Finalize hook warning: {e}")
+
+    try:
+        from backend.telemetry import sync_workflow_tasks_to_db
+        await sync_workflow_tasks_to_db(state.projectId, new_global_tasks, new_completed)
+    except Exception as e:
+        print(f"[DB SYNC] Warning: could not sync tasks to DB after {role_name}: {e}")
         
     return {
         "completed_task_titles": new_completed,
         "workflow_tasks": new_global_tasks,
         "active_role": "",
         "active_tasks": [],
-        "active_pr_number": active_pr_number
+        "active_pr_number": active_pr_number,
+        "qa_passed": out.get("all_tests_passed", state.qa_passed),
+        "reviewer_approved": out.get("code_review_approved", state.reviewer_approved),
+        "security_approved": out.get("security_approved", state.security_approved),
     }
 
 async def database_engineer_stage(state: WorkflowState) -> dict:

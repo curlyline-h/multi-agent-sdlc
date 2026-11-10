@@ -19,3 +19,6 @@ class QAState(BaseModel):
     # ── Output ─────────────────────────────────────────────────────────────────
     all_tests_passed: bool = Field(default=False, description="True if the test suite is completely green")
     new_workflow_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="New tasks generated if bugs are found")
+    project_name: str = Field(default="", description="Project name slug")
+    github_repo_name: str = Field(default="", description="GitHub repository name")
+    active_pr_number: int = Field(default=0, description="Active PR number")

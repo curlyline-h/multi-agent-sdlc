@@ -69,7 +69,7 @@ from pydantic import BaseModel, Field
 from typing import List
 
 class GeneratedFile(BaseModel):
-    path: str = Field(description="The relative path to save the file to, e.g. src/app/api/v1/contact/route.ts")
+    path: str = Field(description="The relative path to save the file to, path inside the project, idiomatic for the chosen stack")
     content: str = Field(description="The full raw code content of the file")
 
 class CodeGenerationResponse(BaseModel):
@@ -77,19 +77,21 @@ class CodeGenerationResponse(BaseModel):
     files: List[GeneratedFile] = Field(description="List of files to generate or update")
 
 def _get_codebase_summary() -> str:
-    output_dir = _ROOT_DIR / "output"
+    from agents.src.shared.tools import get_output_dir
+    output_dir = get_output_dir()
     if not output_dir.exists():
         return "No generated code found yet."
         
     code_blocks = []
     omitted_files = []
-    allowed_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".css", ".json"}
+    allowed_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".css", ".json", ".go", ".java", ".kt", ".rb", ".rs", ".php", ".cs", ".vue", ".svelte", ".html", ".yml", ".yaml", ".toml", ".xml", ".gradle", ".mod", ".prisma"}
     ignored_dirs = {"node_modules", ".git", ".next", "dist", "build"}
     
-    MAX_TOTAL_CHARS = 50000
+    MAX_TOTAL_CHARS = 16000
     current_total_chars = 0
     
-    for path in sorted(output_dir.rglob("*")):
+    from agents.src.shared.code_completeness import prioritized_code_paths
+    for path in prioritized_code_paths(output_dir):
         if path.is_file():
             if any(part in ignored_dirs for part in path.parts):
                 continue
@@ -101,8 +103,8 @@ def _get_codebase_summary() -> str:
                     
                 try:
                     content = path.read_text(encoding="utf-8")
-                    if len(content) > 8000:
-                        content = content[:8000] + "\n... [TRUNCATED] ..."
+                    if len(content) > 2500:
+                        content = content[:2500] + "\n... [TRUNCATED] ..."
                     block = f"File: {rel_path}\n```\n{content}\n```"
                     code_blocks.append(block)
                     current_total_chars += len(block)
@@ -128,8 +130,10 @@ def write_code_node(state: BackendDevState) -> dict:
     prompt = PromptTemplate.from_template(prompt_path.read_text(encoding="utf-8"))
     
     # We load the current db schema from output/db/init.sql if it exists
+    from agents.src.shared.tools import get_output_dir, write_file, run_terminal_command
+    output_dir = get_output_dir()
     db_schema = "No database schema found."
-    db_file = _ROOT_DIR / "output" / "db" / "init.sql"
+    db_file = output_dir / "db" / "init.sql"
     if db_file.exists():
         db_schema = db_file.read_text(encoding="utf-8")
         
@@ -144,13 +148,15 @@ def write_code_node(state: BackendDevState) -> dict:
         test_failures=state.test_failures or 'No failures',
     )
     
-    formatted += "\n\nCRITICAL: You MUST output ONLY valid JSON matching this schema:\n{\n  \"terminal_commands\": [\"cmd1\", \"cmd2\"],\n  \"files\": [\n    {\"path\": \"src/file.ts\", \"content\": \"raw code\"}\n  ]\n}\n\nDo not use markdown wrappers unless wrapping the entire JSON block in ```json ... ```. Your output MUST parse successfully via json.loads()."
+    formatted += "\n\nProduct Requirements (authoritative domain, implement ONLY this):\n" + (getattr(state, "prd", "") or "")[:5000]
     
-    from langchain_core.tools import tool
-    from agents.src.shared.tools import run_terminal_command
+    from agents.src.shared.code_completeness import stack_contract_text
+    formatted += "\n\n" + stack_contract_text("backend", state.final_design_doc or "")
+    
+    formatted += "\n\nCRITICAL: You can write files directly using the `write_file` tool AND/OR output valid JSON matching this schema:\n{\n  \"terminal_commands\": [\"cmd1\", \"cmd2\"],\n  \"files\": [\n    {\"path\": \"<project-relative path>\", \"content\": \"<complete file source>\"}\n  ]\n}\n\nDo not use markdown wrappers unless wrapping the entire JSON block in ```json ... ```."
         
     # Bind tools to the LLM
-    tools_list = [read_file_range, semantic_code_search, search_web, run_terminal_command, db_schema_inspector, replace_file_content, list_directory, fetch_server_logs, code_linter, run_unit_tests, rag_search]
+    tools_list = [write_file, read_file_range, semantic_code_search, search_web, run_terminal_command, db_schema_inspector, replace_file_content, list_directory, fetch_server_logs, code_linter, run_unit_tests, rag_search]
     llm_with_tools = _llm.bind_tools(tools_list)
     
     # Inform the agent it can execute terminal commands, read chunks or search existing code
@@ -220,48 +226,37 @@ def write_code_node(state: BackendDevState) -> dict:
                 else:
                     print(f"Backend Dev called unknown tool: {tool_name}")
                     
-        # Find the content containing the JSON
+        # Find the content containing the JSON (only from assistant responses in messages[2:])
         final_content = ""
-        for msg in reversed(messages):
-            if hasattr(msg, "content") and isinstance(msg.content, str) and ("```json" in msg.content or "terminal_commands" in msg.content):
+        for msg in reversed(messages[2:]):
+            if hasattr(msg, "content") and isinstance(msg.content, str) and ("```json" in msg.content or "terminal_commands" in msg.content or '"files"' in msg.content):
                 final_content = msg.content
                 break
-        if not final_content:
-            final_content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+        if not final_content and len(messages) > 2:
+            last_ai = next((m for m in reversed(messages[2:]) if getattr(m, "type", "ai") == "ai" and getattr(m, "content", "")), None)
+            final_content = last_ai.content if last_ai else ""
         
         # Now parse final_content as the code JSON response
-        output_dir = _ROOT_DIR / "output"
+        from agents.src.shared.tools import _clean_rel_path
+        from agents.src.shared.llm import extract_files_and_commands_robust, llm_invoke_with_retry
+        output_dir = get_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        import re
-        match = re.search(r'```(?:json)?\s*(.*?)\s*```', final_content, re.DOTALL)
-        if match:
-            content = match.group(1)
-        else:
-            start = final_content.find('{')
-            end = final_content.rfind('}')
-            if start != -1 and end != -1:
-                content = final_content[start:end+1]
-            else:
-                content = final_content
-                
-        def _parse_json_robust(text: str) -> dict:
-            try:
-                return json.loads(text, strict=False)
-            except Exception:
-                pass
-            cleaned = re.sub(r',\s*([}\]])', r'\1', text)
-            try:
-                return json.loads(cleaned, strict=False)
-            except Exception:
-                pass
-            cleaned_ctrl = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
-            return json.loads(cleaned_ctrl, strict=False)
-
-        data = _parse_json_robust(content)
+        data = extract_files_and_commands_robust(final_content)
+        valid_files = [f for f in data.get("files", []) if isinstance(f, dict) and f.get("content", "").strip() not in ("raw code", "...", "")]
+        if not valid_files:
+            # Final tool-free synthesis call if tool loop ended without emitting code files
+            synth_resp = llm_invoke_with_retry(
+                _llm,
+                [messages[0], HumanMessage(content="Now output ONLY the final ```json block with the complete `files` array implementing the backend task. Do not use placeholder 'raw code'.")]
+            )
+            data = extract_files_and_commands_robust(getattr(synth_resp, "content", ""))
         
         # Execute terminal commands
-        for cmd in data.get("terminal_commands", []):
+        from agents.src.shared.code_completeness import filter_terminal_commands
+        for cmd in filter_terminal_commands(data.get("terminal_commands", [])):
+            if not cmd or cmd.strip() in ("cmd1", "cmd2"):
+                continue
             # Only block infinite blocking dev server daemons that hang execution
             DAEMON_SERVER_PREFIXES = [
                 "npm run dev", "npm run start", "npm start", "node server", 
@@ -302,13 +297,16 @@ def write_code_node(state: BackendDevState) -> dict:
         # Write files
         for f in data.get("files", []):
             file_content = f.get("content", "")
+            if not file_content or file_content.strip() in ("raw code", "..."):
+                continue
             
             if f.get("path", "").endswith(".json"):
                 file_content = re.sub(r'//.*?\n', '\n', file_content)
                 file_content = re.sub(r'/\*.*?\*/', '', file_content, flags=re.DOTALL)
             
-            clean_path = f.get("path", "").lstrip("/")
-            if clean_path.startswith("output/"): clean_path = clean_path[7:]
+            clean_path = _clean_rel_path(f.get("path", ""))
+            if not clean_path:
+                continue
             file_path = output_dir / clean_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(file_content, encoding="utf-8")
@@ -320,6 +318,20 @@ def write_code_node(state: BackendDevState) -> dict:
                 broadcast_tool_call("create_file", rel_p, event_type="FILE_CHANGE", payload_extra={"path": rel_p, "action": "CREATED", "diff": f"+ Created file {rel_p}"})
             except Exception:
                 pass
+
+        # End-to-End Completeness & Missing Import / Route Wiring Pass
+        try:
+            from agents.src.shared.code_completeness import ensure_backend_tasks_and_routes_wired
+            wired_files = ensure_backend_tasks_and_routes_wired(
+                output_dir=output_dir,
+                tasks_str=str(state.current_task),
+                design_doc=state.final_design_doc or "",
+                db_schema=db_schema or "",
+            )
+            for wf in wired_files:
+                generated_code_dump.append(f"File: {wf} wired/verified.")
+        except Exception as comp_e:
+            print(f"[Backend Dev] Completeness check warning: {comp_e}")
             
     except Exception as e:
         print(f"Raw JSON parsing failed: {e}")
@@ -337,8 +349,7 @@ def lint_code_node(state: BackendDevState) -> dict:
     """
     Runs the syntax linter against the generated code.
     """
-    # Assuming code is written to a temp file via MCP
-    result = code_linter.invoke({"file_path": "backend/src/temp.py"})
+    result = code_linter.invoke({"file_path": "."})
     return {"linter_errors": "" if result == "LINT_PASSED" else result}
 
 # ---------------------------------------------------------------------------
@@ -348,7 +359,7 @@ def run_tests_node(state: BackendDevState) -> dict:
     """
     Runs the unit tests against the generated code.
     """
-    result = run_unit_tests.invoke({"test_file_path": "backend/tests/test_temp.py"})
+    result = run_unit_tests.invoke({"test_file_path": "."})
     return {"test_failures": "" if result == "TESTS_PASSED" else result}
 
 # ---------------------------------------------------------------------------
@@ -367,10 +378,17 @@ def mark_task_complete_node(state: BackendDevState) -> dict:
         if state.current_code_draft:
             changes.append({
                 "task_title": state.current_task.get("title", "Unknown"),
-                "status": "completed"
+                "status": "completed_with_errors" if (state.linter_errors or state.test_failures) else "completed"
             })
         
+    failed = list(getattr(state, "failed_tasks", []) or [])
+    if state.current_task and (state.linter_errors or state.test_failures):
+        failed.append({
+            "title": state.current_task.get("title", ""),
+            "errors": ((state.linter_errors or "") + "\n" + (state.test_failures or ""))[:1500],
+        })
     return {
+        "failed_tasks": failed,
         "completed_tasks": completed,
         "current_task": None,
         "backend_file_changes": changes
@@ -382,12 +400,13 @@ def mark_task_complete_node(state: BackendDevState) -> dict:
 def push_to_github_node(state: BackendDevState) -> dict:
     """Pushes the current output directory to GitHub with a descriptive commit."""
     from agents.src.shared.github import push_to_github
-    current_task = state.current_task or {}
+    completed_list = list(getattr(state, "completed_tasks", []) or [])
+    current_task = state.current_task or (completed_list[-1] if completed_list else {})
     context = {
         "project_name":      getattr(state, "project_name", "") or "",
-        "task_title":        current_task.get("title", "") if isinstance(current_task, dict) else "",
+        "task_title":        current_task.get("title", "Implement Backend API & Services") if isinstance(current_task, dict) else "Implement Backend API & Services",
         "task_description":  current_task.get("description", "") if isinstance(current_task, dict) else "",
-        "completed_tasks":   list(getattr(state, "completed_task_titles", []) or []),
+        "completed_tasks":   [t.get("title", str(t)) if isinstance(t, dict) else str(t) for t in completed_list],
         "files_changed":     list(getattr(state, "final_file_changes", []) or []),
         "scope":             "api",
         "linter_clean":      not bool(getattr(state, "linter_errors", "")),

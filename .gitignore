@@ -82,4 +82,22 @@ output/
 .DS_Store
 Thumbs.db
 
+# Temporary scratch & execution artifacts
+.tmp*
+*.tmp
+debug_*.txt
+tasks-proj.json
+uv.lock
+output_archive/
+
+# LaTeX build intermediates
+*.aux
+*.bbl
+*.blg
+*.out
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+*.xdv
+
 # Final release v1.0 cleanup - 2026-11-09 16:45:00

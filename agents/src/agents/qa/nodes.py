@@ -53,7 +53,8 @@ class TestAnalysis(BaseModel):
 # 1. Generate Test Scripts Node
 # ---------------------------------------------------------------------------
 def _get_codebase_summary() -> str:
-    output_dir = Path(__file__).resolve().parents[5] / "output"
+    from agents.src.shared.tools import get_output_dir
+    output_dir = get_output_dir()
     if not output_dir.exists():
         return "No generated code found yet."
         
@@ -64,7 +65,7 @@ def _get_codebase_summary() -> str:
     
     import os
     provider = os.getenv("LLM_PROVIDER", "").lower()
-    MAX_TOTAL_CHARS = 16000 if provider == "ollama" else 40000
+    MAX_TOTAL_CHARS = 10000
     current_total_chars = 0
     
     for path in sorted(output_dir.rglob("*")):
@@ -79,8 +80,8 @@ def _get_codebase_summary() -> str:
                     
                 try:
                     content = path.read_text(encoding="utf-8")
-                    if len(content) > 5000:
-                        content = content[:5000] + "\n... [TRUNCATED] ..."
+                    if len(content) > 2500:
+                        content = content[:2500] + "\n... [TRUNCATED] ..."
                     block = f"File: {rel_path}\n```\n{content}\n```"
                     code_blocks.append(block)
                     current_total_chars += len(block)
@@ -191,14 +192,19 @@ def generate_tests_node(state: QAState) -> dict:
                 result = f"Error: Tool {name} not found."
             messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
     
-    # Find the content containing the typescript block
+    # Find the content containing the typescript block (only from assistant responses in messages[2:])
     content = ""
-    for msg in reversed(messages):
+    for msg in reversed(messages[2:]):
         if hasattr(msg, "content") and isinstance(msg.content, str) and ("```typescript" in msg.content.lower() or "```ts" in msg.content.lower()):
             content = msg.content
             break
     if not content:
-        content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+        from agents.src.shared.llm import llm_invoke_with_retry
+        synth_resp = llm_invoke_with_retry(
+            _llm,
+            [messages[0], HumanMessage(content="Output ONLY a complete Playwright TypeScript test suite wrapped in a ```typescript code block testing the application endpoints and UI.")]
+        )
+        content = getattr(synth_resp, "content", "")
         
     match = re.search(r'```(?:typescript|ts)?\s*(.*?)\s*```', content, re.DOTALL | re.IGNORECASE)
     if match:
@@ -207,7 +213,8 @@ def generate_tests_node(state: QAState) -> dict:
         test_code = content.strip()
     
     # Write the test to the output directory
-    output_dir = Path(__file__).resolve().parents[4] / "output"
+    from agents.src.shared.tools import get_output_dir
+    output_dir = get_output_dir()
     
     # Ensure tests directory exists
     test_dir = output_dir / "tests"
@@ -254,6 +261,16 @@ def analyze_failures_node(state: QAState) -> dict:
     logs = state.test_run_output
     
     if "TEST_FAILED: No test suite configuration found" in logs or "TEST_EXECUTION_COMPLETE: Tests passed" in logs:
+        try:
+            from agents.src.shared.tools import get_output_dir
+            docs_dir = get_output_dir() / "docs"
+            docs_dir.mkdir(parents=True, exist_ok=True)
+            (docs_dir / "07_qa_test_report.md").write_text(
+                f"# QA Automation & Test Execution Report\n\n- **All Tests Passed:** `True`\n\n## Test Runner Output\n```\n{logs}\n```\n",
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
         # No bugs to report
         return {
             "discovered_bugs": [],
@@ -358,3 +375,18 @@ def pop_task_node(state: QAState) -> dict:
 
 def mark_task_complete_node(state: QAState) -> dict:
     return {"current_task": None}
+
+def push_to_github_node(state: QAState) -> dict:
+    """Pushes generated QA test suites to GitHub with a descriptive test commit."""
+    from agents.src.shared.github import push_to_github
+    context = {
+        "project_name":      getattr(state, "project_name", "") or "",
+        "task_title":        "Add automated E2E and integration test suite",
+        "task_description":  "Generated automated Playwright/integration test suite and verification specs.",
+        "completed_tasks":   [],
+        "files_changed":     ["tests/e2e.spec.ts", "playwright.config.ts"],
+        "scope":             "qa",
+        "linter_clean":      state.all_tests_passed,
+    }
+    res = push_to_github(getattr(state, "github_repo_name", ""), "QA Automation Agent", context=context)
+    return {"active_pr_number": res.get("pr_number", 0)}

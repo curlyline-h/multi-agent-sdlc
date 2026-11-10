@@ -23,7 +23,10 @@ def agent_tool(*args, **kwargs):
                     broadcast_tool_call(func.__name__, arg_str[:250])
             except Exception:
                 pass
-            return func(*f_args, **f_kwargs)
+            try:
+                return func(*f_args, **f_kwargs)
+            except Exception as tool_exc:
+                return f"Tool error in {func.__name__}: {tool_exc}"
         return _lc_tool(*args, **kwargs)(wrapper)
         
     if len(args) == 1 and callable(args[0]) and not kwargs:
@@ -34,8 +37,72 @@ def agent_tool(*args, **kwargs):
 
 tool = agent_tool
 
+import os
+
 _ROOT_DIR = Path(__file__).resolve().parents[3]
 _OUTPUT_DIR = _ROOT_DIR / "output"
+
+
+def get_output_dir() -> Path:
+    """
+    Returns the active scenario's dedicated working directory `output/<scenario_id>/`
+    when `USE_SCENARIO_SUBDIR=1` or when `output/<scenario_id>` exists, falling back to `output/`.
+    """
+    scen_id = os.environ.get("ACTIVE_SCENARIO_ID", "").strip()
+    base = _ROOT_DIR / "output"
+    if scen_id and (os.environ.get("USE_SCENARIO_SUBDIR") == "1" or (base / scen_id).exists()):
+        out = base / scen_id
+    else:
+        out = base
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def _clean_rel_path(p: str) -> str:
+    clean_p = (p or "").strip().lstrip("/")
+    scen_id = os.environ.get("ACTIVE_SCENARIO_ID", "").strip()
+    if clean_p == "output" or (scen_id and clean_p == f"output/{scen_id}"):
+        return ""
+    if scen_id and clean_p.startswith(f"output/{scen_id}/"):
+        clean_p = clean_p[len(f"output/{scen_id}/"):]
+    elif clean_p.startswith("output/"):
+        clean_p = clean_p[7:]
+    if scen_id and clean_p.startswith(f"{scen_id}/"):
+        clean_p = clean_p[len(f"{scen_id}/"):]
+    return clean_p
+
+
+@tool
+def write_file(file_path: str, content: str) -> str:
+    """
+    Creates or overwrites a file in the project's output directory with the given content.
+    Parent directories are created automatically.
+    Args:
+        file_path: Relative path of the file inside the project output directory (e.g. 'src/main.py', 'db/init.sql').
+        content: Full text content to write into the file.
+    """
+    out_dir = get_output_dir()
+    clean_p = _clean_rel_path(file_path)
+    if not clean_p:
+        return "Error: file_path cannot be empty."
+    target = out_dir / clean_p
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        try:
+            from backend.telemetry import broadcast_tool_call
+            broadcast_tool_call(
+                "create_file",
+                clean_p,
+                event_type="FILE_CHANGE",
+                payload_extra={"path": clean_p, "action": "CREATED", "diff": f"+ Wrote {clean_p} ({len(content)} chars)"},
+            )
+        except Exception:
+            pass
+        return f"SUCCESS: Wrote {len(content)} characters to {clean_p}."
+    except Exception as e:
+        return f"Error writing file {clean_p}: {e}"
+
 
 @tool
 def run_terminal_command(command: str) -> str:
@@ -44,14 +111,13 @@ def run_terminal_command(command: str) -> str:
     Args:
         command: The exact shell command line string to execute (e.g. 'npm install axios', 'python script.py').
     """
-    _OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = get_output_dir()
     
     # Non-blocking non-interactive auto-fix for npm install
     if command.startswith("npm install") and "--legacy-peer-deps" not in command:
         command += " --legacy-peer-deps"
     
     # Auto-fix Windows cmd.exe incompatible commands
-    import os
     if os.name == 'nt':
         if command.strip().startswith("mkdir -p "):
             command = command.replace("mkdir -p ", "mkdir ")
@@ -62,7 +128,7 @@ def run_terminal_command(command: str) -> str:
         res = subprocess.run(
             command,
             shell=True,
-            cwd=str(_OUTPUT_DIR),
+            cwd=str(out_dir),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -102,14 +168,17 @@ def run_terminal_command(command: str) -> str:
 
 
 @tool
-def list_directory(path: str) -> str:
+def list_directory(path: str = "", depth: int = 1) -> str:
     """
-    Lists the files and directories in the given path within the output/ directory.
+    Lists the files and directories in the given path within the project output directory.
     Use this to explore the project structure and find exact file paths for imports or edits.
     Args:
         path: Directory path relative to output/ (e.g., '', 'src', 'src/components'). Use '' for root.
+        depth: Optional directory listing depth (default 1).
     """
-    target = _OUTPUT_DIR / path.strip("/")
+    out_dir = get_output_dir()
+    clean_p = _clean_rel_path(path)
+    target = (out_dir / clean_p) if clean_p else out_dir
     if not target.exists():
         return f"Error: Directory '{path}' does not exist."
     if not target.is_dir():
@@ -137,7 +206,7 @@ def fetch_server_logs(lines: int = 100) -> str:
     Since 'npm run dev' and 'fastapi run' are skipped by run_terminal_command to prevent blocking,
     devops or dev agents can configure daemons to write to server.log, and use this tool to debug runtime errors.
     """
-    log_file = _OUTPUT_DIR / "server.log"
+    log_file = get_output_dir() / "server.log"
     if not log_file.exists():
         return "No server.log file found. Ensure your server command redirects output to server.log (e.g. 'npm run dev > server.log 2>&1 &')."
         
@@ -166,7 +235,9 @@ def replace_file_content(file_path: str, target_string: str, replacement_string:
         target_string: The exact string block to replace.
         replacement_string: The string block to insert in its place.
     """
-    target = _OUTPUT_DIR / file_path
+    out_dir = get_output_dir()
+    clean_p = _clean_rel_path(file_path)
+    target = out_dir / clean_p
     if not target.exists():
         return f"Error: File {file_path} does not exist."
         
@@ -187,7 +258,7 @@ def replace_file_content(file_path: str, target_string: str, replacement_string:
 
 
 @tool
-def read_file_range(file_path: str, start_line: int, end_line: int) -> str:
+def read_file_range(file_path: str, start_line: int = 1, end_line: int = 200) -> str:
     """
     Reads a specific line range from a file (1-indexed) in the output directory
     to prevent fetching massive files.
@@ -196,7 +267,9 @@ def read_file_range(file_path: str, start_line: int, end_line: int) -> str:
         start_line: The line number to start reading from (inclusive).
         end_line: The line number to end reading (inclusive).
     """
-    target = _OUTPUT_DIR / file_path
+    out_dir = get_output_dir()
+    clean_p = _clean_rel_path(file_path)
+    target = out_dir / clean_p
     if not target.exists():
         return f"Error: File {file_path} does not exist."
         
@@ -222,21 +295,24 @@ def read_file_range(file_path: str, start_line: int, end_line: int) -> str:
 
 
 @tool
-def semantic_code_search(query: str) -> str:
+def semantic_code_search(query: str, path: str = "") -> str:
     """
     Searches previously written code to find utility functions or router patterns.
     Uses basic keyword matching across the output/ directory.
     Args:
         query: What to search for (e.g., 'auth', 'database connection').
+        path: Optional subdirectory relative to output/ to restrict search.
     """
-    output_dir = _OUTPUT_DIR
+    output_dir = get_output_dir()
+    clean_sub = _clean_rel_path(path)
+    search_root = (output_dir / clean_sub) if clean_sub and (output_dir / clean_sub).exists() else output_dir
     matches = []
     
     # Common code file extensions
-    extensions = ["*.py", "*.ts", "*.js", "*.java", "*.go", "*.rs", "*.tsx", "*.jsx"]
+    extensions = ["*.py", "*.ts", "*.js", "*.java", "*.go", "*.rs", "*.tsx", "*.jsx", "*.sql", "*.yaml", "*.json"]
     
     for ext in extensions:
-        for f in glob.glob(str(output_dir / "**" / ext), recursive=True):
+        for f in glob.glob(str(search_root / "**" / ext), recursive=True):
             if "node_modules" in f or "/.git/" in f or "\\.git\\" in f or ".next" in f:
                 continue
             
@@ -297,6 +373,6 @@ def rag_search(query: str, k: int = 5) -> str:
 
 from agents.src.shared.llm import safe_web_search
 @tool
-def search_web(query: str) -> str:
+def search_web(query: str, path: str = "") -> str:
     """Performs a web search to find current information or documentation."""
     return safe_web_search(query)

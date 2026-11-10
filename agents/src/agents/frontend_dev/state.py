@@ -3,6 +3,7 @@ from typing import List, Dict, Any, Optional
 
 class FrontendDevState(BaseModel):
     # ── Inputs from global state ──────────────────────────────────────────────
+    prd: str = Field(default="", description="Approved PRD (authoritative requirements)")
     final_design_doc: str = Field(description="Architecture design doc")
     github_repo_name: Optional[str] = Field(default=None, description="Name for the GitHub repo to push code to")
     
@@ -22,3 +23,4 @@ class FrontendDevState(BaseModel):
     # ── Output ─────────────────────────────────────────────────────────────────
     frontend_file_changes: List[Dict[str, Any]] = Field(default_factory=list, description="All frontend files modified")
     active_pr_number: int = Field(default=0, description="The PR number created by this agent")
+    failed_tasks: List[Dict[str, Any]] = Field(default_factory=list, description="Tasks that still failed lint/tests after all retries")

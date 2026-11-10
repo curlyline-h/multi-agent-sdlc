@@ -97,6 +97,8 @@ workflow.add_conditional_edges(
 # Execution phase
 workflow.add_edge("execute_deployment", "push_to_github")
 workflow.add_edge("push_to_github", "verify_health")
+workflow.add_edge("verify_health", "mark_task_complete")
+workflow.add_edge("mark_task_complete", "pop_task")
 import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
 

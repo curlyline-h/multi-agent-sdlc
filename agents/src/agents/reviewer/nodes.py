@@ -47,8 +47,9 @@ def analyze_complexity_node(state: ReviewerState) -> dict:
     return {"complexity_report": report}
 
 def _get_code_under_review() -> str:
+    from agents.src.shared.tools import get_output_dir
     root_dir = Path(__file__).resolve().parents[4]
-    output_dir = root_dir / "output"
+    output_dir = get_output_dir()
     if not output_dir.exists():
         return "No generated output code found."
         
@@ -198,14 +199,15 @@ def review_code_node(state: ReviewerState) -> dict:
             messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
 
     try:
-        # Find the content containing the JSON
+        # Find the content containing the JSON (only from assistant responses in messages[2:])
         content = ""
-        for msg in reversed(messages):
+        for msg in reversed(messages[2:]):
             if hasattr(msg, "content") and isinstance(msg.content, str) and "```json" in msg.content:
                 content = msg.content
                 break
-        if not content:
-            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
+        if not content and len(messages) > 2:
+            last_ai = next((m for m in reversed(messages[2:]) if getattr(m, "type", "ai") == "ai" and getattr(m, "content", "")), None)
+            content = last_ai.content if last_ai else ""
             
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
@@ -221,6 +223,20 @@ def review_code_node(state: ReviewerState) -> dict:
         print(f"[Reviewer Agent] JSON parsing failed: {e}. Defaulting to approval.")
         parsed_response = ReviewResponse(feedback="Automated review passed with default approval.", is_approved=True)
     
+    try:
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "08_code_review_report.md").write_text(
+            f"# Principal Engineer Code Review Report\n\n"
+            f"- **Approved:** `{parsed_response.is_approved}`\n\n"
+            f"## Complexity Analysis\n```\n{state.complexity_report}\n```\n\n"
+            f"## Review Feedback\n{parsed_response.feedback}\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
     return {
         "code_review_comments": parsed_response.feedback,
         "code_review_approved": parsed_response.is_approved

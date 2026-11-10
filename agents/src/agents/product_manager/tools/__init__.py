@@ -61,7 +61,15 @@ def create_jira_epic(
             "epic_url": f"{jira_url}/browse/{new_issue.key}"
         }
     except Exception as e:
-        raise RuntimeError(f"Failed to create Jira Epic: {e}")
+        try:
+            issue_dict['issuetype'] = {'name': 'Task'}
+            new_issue = jira.create_issue(fields=issue_dict)
+            return {
+                "epic_key": new_issue.key,
+                "epic_url": f"{jira_url}/browse/{new_issue.key}"
+            }
+        except Exception as e2:
+            raise RuntimeError(f"Failed to create Jira Epic: {e} / fallback: {e2}")
 
 
 @tool
@@ -95,10 +103,11 @@ def create_jira_tickets(
 
     created_keys = []
     for task in tasks:
+        t_files = [str(x) for x in (task.get('target_files') or [])]
         issue_dict = {
             'project': {'key': project_key},
-            'summary': f"[{task.get('assignee_role', 'Unassigned')}] {task.get('title', 'Task')}",
-            'description': f"{task.get('description', '')}\n\nTarget Files: {', '.join(task.get('target_files', []))}",
+            'summary': f"[{task.get('assignee_role', 'Unassigned')}] {task.get('title', 'Task')}"[:250],
+            'description': f"{task.get('description', '')}\n\nTarget Files: {', '.join(t_files) if t_files else 'Auto-discovered'}",
             'issuetype': {'name': 'Task'},
         }
         if epic_key and not epic_key.startswith("STUB"):
@@ -110,12 +119,24 @@ def create_jira_tickets(
             print(f"Failed to create task {task.get('title')}: {e}")
             # Try falling back without parent key if it fails due to hierarchy mapping
             try:
-                del issue_dict['parent']
+                issue_dict.pop('parent', None)
                 issue_dict['description'] += f"\n\n(Intended Parent Epic: {epic_key})"
                 new_issue = jira.create_issue(fields=issue_dict)
                 created_keys.append(new_issue.key)
             except Exception as inner_e:
                 print(f"Failed to create task even without parent: {inner_e}")
+
+    try:
+        import json as _json
+        from agents.src.shared.tools import get_output_dir
+        out_dir = get_output_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "jira_tickets.json").write_text(
+            _json.dumps({"project_key": project_key, "epic_key": epic_key, "ticket_keys": created_keys, "jira_url": jira_url}, indent=2),
+            encoding="utf-8"
+        )
+    except Exception:
+        pass
 
     return created_keys
 

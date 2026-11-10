@@ -17,7 +17,7 @@ from agents.src.shared.tools import rag_search
 # ---------------------------------------------------------------------------
 # LLM setup
 # ---------------------------------------------------------------------------
-_llm = get_llm(temperature=0.1, max_tokens=4000)  # For large generation
+_llm = get_llm(temperature=0.1, max_tokens=2500)  # For large generation
 _llm_short = get_llm(temperature=0.1, max_tokens=1500)  # For short critiques
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
 def _load_prompt(filename: str) -> str:
@@ -98,8 +98,7 @@ def design_draft_node(state: ArchitectState) -> dict:
         structure_feedback=state.structure_feedback or "No structure feedback.",
         self_critique=state.self_critique_notes or "No previous critique.",
     )
-    llm_with_tools = _llm.bind_tools([rag_search, validate_schema, lint_api_spec])
-    response = llm_invoke_with_retry(llm_with_tools, formatted)
+    response = llm_invoke_with_retry(_llm, formatted)
     content = response.content
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     return {
@@ -154,7 +153,7 @@ def self_critique_node(state: ArchitectState) -> dict:
         If the design is complete and production-ready, respond with: DESIGN_COMPLETE
         """
     )
-    response = _llm_short.invoke(critique_prompt.format(
+    response = llm_invoke_with_retry(_llm_short, critique_prompt.format(
         user_req=state.user_req,
         prd=state.prd[:3000] if state.prd else "Not available.",
         draft=state.system_design_draft,
@@ -221,8 +220,26 @@ def approve_structure_node(state: ArchitectState) -> dict:
 # ---------------------------------------------------------------------------
 def finalize_design_node(state: ArchitectState) -> dict:
     """
-    All three sections are approved. Marks the draft as the final design document.
+    All three sections are approved. Marks the draft as the final design document
+    and saves it to both workspace root and output/docs/.
     """
+    root_dir = Path(__file__).resolve().parents[4]
+    try:
+        (root_dir / "final_design.md").write_text(state.system_design_draft, encoding="utf-8")
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "03_system_design.md").write_text(state.system_design_draft, encoding="utf-8")
+        validation_md = (
+            f"# Architecture Validation & Self-Critique\n\n"
+            f"## Schema Validation Notes\n{state.schema_validation_notes or 'N/A'}\n\n"
+            f"## API Linting Notes\n{state.api_validation_notes or 'N/A'}\n\n"
+            f"## Architect Self-Critique\n{state.self_critique_notes or 'N/A'}\n"
+        )
+        (docs_dir / "03a_architecture_validation.md").write_text(validation_md, encoding="utf-8")
+    except Exception as e:
+        print(f"Failed to save design docs: {e}")
+
     return {
         "final_design_doc": state.system_design_draft,
     }

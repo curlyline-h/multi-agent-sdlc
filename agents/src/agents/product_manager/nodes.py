@@ -28,8 +28,8 @@ from agents.src.shared.tools import rag_search
 # LLM setup
 # ---------------------------------------------------------------------------
 _llm = get_llm(
-    temperature=0.4,
-    max_tokens=4000 
+    temperature=0.2,
+    max_tokens=2500 
 )
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
@@ -97,8 +97,7 @@ def write_prd_node(state: ProductManagerState) -> dict:
         user_feedback=state.user_feedback or "No previous feedback.",
     )
 
-    llm_with_tools = _llm.bind_tools([rag_search, create_jira_epic, create_jira_tickets, create_slack_channel])
-    response = llm_invoke_with_retry(llm_with_tools, formatted)
+    response = llm_invoke_with_retry(_llm, formatted)
     content = response.content
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     return {
@@ -142,11 +141,15 @@ def finalize_prd_node(state: ProductManagerState) -> dict:
     slug = "-".join(words[:4]).strip("-")
     channel_name = f"proj-{slug}"[:80].strip("-")
     
-    # Save the approved PRD to the workspace root
+    # Save the approved PRD to the workspace root and scenario output/docs/
     workspace_root = Path(__file__).resolve().parents[4]
     prd_path = workspace_root / "final_prd.md"
     try:
         prd_path.write_text(state.prd_draft, encoding="utf-8")
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "02_prd.md").write_text(state.prd_draft, encoding="utf-8")
     except Exception as e:
         print(f"Failed to write PRD to {prd_path}: {e}")
 
@@ -169,9 +172,14 @@ def create_slack_channel_node(state: ProductManagerState) -> dict:
     """
     try:
         result = create_slack_channel.invoke({"channel_name": state.project_name})
+        if isinstance(result, dict):
+            return {
+                "slack_channel_id": result.get("channel_id", "#general"),
+                "slack_channel_name": result.get("channel_name", state.project_name),
+            }
         return {
-            "slack_channel_id": result.get("channel_id", "#general"),
-            "slack_channel_name": result.get("channel_name", state.project_name),
+            "slack_channel_id": "#general",
+            "slack_channel_name": state.project_name,
         }
     except Exception as e:
         print(f"Failed to create Slack channel: {e}")

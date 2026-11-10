@@ -48,10 +48,10 @@ def _should_loop_clarification(state: PlanningState) -> str:
 
 def _should_revise_after_critique(state: PlanningState) -> str:
     """
-    If the critique found issues and we haven't exceeded 3 iterations,
+    If the critique found issues and we haven't exceeded 1 iteration,
     loop back to generate another draft. Otherwise proceed to user approval.
     """
-    max_iterations = 3
+    max_iterations = 1
     has_issues = (
         state.critique_notes
         and "NO_ISSUES_FOUND" not in state.critique_notes.upper()

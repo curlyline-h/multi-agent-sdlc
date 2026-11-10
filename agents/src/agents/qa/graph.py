@@ -21,14 +21,15 @@ from agents.src.agents.qa.nodes import (
     generate_tests_node,
     execute_tests_node,
     analyze_failures_node,
-    mark_task_complete_node
+    mark_task_complete_node,
+    push_to_github_node
 )
 
 # ---------------------------------------------------------------------------
 # Router: Is Queue Empty?
 # ---------------------------------------------------------------------------
 def _is_queue_empty(state: QAState) -> str:
-    return "END" if state.current_task is None else "generate_tests"
+    return "push_to_github" if state.current_task is None else "generate_tests"
 
 # ---------------------------------------------------------------------------
 # Graph assembly
@@ -41,6 +42,7 @@ workflow.add_node("generate_tests", generate_tests_node)
 workflow.add_node("execute_tests", execute_tests_node)
 workflow.add_node("analyze_failures", analyze_failures_node)
 workflow.add_node("mark_task_complete", mark_task_complete_node)
+workflow.add_node("push_to_github", push_to_github_node)
 
 # Flow execution
 workflow.add_edge(START, "pop_task")
@@ -51,9 +53,11 @@ workflow.add_conditional_edges(
     _is_queue_empty,
     {
         "END": END,
+        "push_to_github": "push_to_github",
         "generate_tests": "generate_tests"
     }
 )
+workflow.add_edge("push_to_github", END)
 
 workflow.add_edge("generate_tests", "execute_tests")
 workflow.add_edge("execute_tests", "analyze_failures")

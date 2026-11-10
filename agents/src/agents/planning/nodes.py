@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from agents.src.shared.llm import get_llm
+from agents.src.shared.llm import get_llm, llm_invoke_with_retry
 from langchain_core.prompts import PromptTemplate
 from langgraph.types import interrupt
 
@@ -26,11 +26,11 @@ from agents.src.shared.tools import rag_search
 # LLM setup  (swap model / provider to your preference)
 # ---------------------------------------------------------------------------
 
-_llm_draft = get_llm(temperature=0.7, max_tokens=4000)
+_llm_draft = get_llm(temperature=0.2, max_tokens=2500)
 
 _llm_critique = get_llm(
-    temperature=0.7,
-    max_tokens=4000
+    temperature=0.2,
+    max_tokens=2000
 )
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ def research_node(state: PlanningState) -> dict:
         "Does this user request require researching an existing internal codebase or finding external web documentation? "
         "Reply with ONLY 'YES' or 'NO'.\n\nRequest: {req}"
     )
-    decision = _llm_critique.invoke(decision_prompt.format(req=state.user_req)).content.strip().upper()
+    decision = llm_invoke_with_retry(_llm_critique, decision_prompt.format(req=state.user_req)).content.strip().upper()
     
     # Strip out any <think> blocks
     decision = re.sub(r'<think>.*?</think>', '', decision, flags=re.DOTALL).strip()
@@ -75,9 +75,10 @@ def research_node(state: PlanningState) -> dict:
     # --- DuckDuckGo web search ---
     from agents.src.shared.llm import safe_web_search
     web_results = safe_web_search(state.user_req)
+    web_results_list = [web_results] if isinstance(web_results, str) else list(web_results)
 
     return {
-        "web_search_results": web_results,
+        "web_search_results": web_results_list,
         "rag_results": rag_results,
     }
 
@@ -95,7 +96,7 @@ def clarification_node(state: PlanningState) -> dict:
     """
     prompt_path = _PROMPTS_DIR / "planning_qa.txt"
     clarify_prompt = PromptTemplate.from_template(prompt_path.read_text(encoding="utf-8"))
-    response = _llm_critique.invoke(clarify_prompt.format(
+    response = llm_invoke_with_retry(_llm_critique, clarify_prompt.format(
         user_req=state.user_req,
         qa_history=state.user_clarification_answers or "None"
     ))
@@ -104,7 +105,7 @@ def clarification_node(state: PlanningState) -> dict:
     # Strip out any <think>...</think> blocks from Qwen before checking for CLEAR
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
 
-    if clean_content.upper() == "CLEAR":
+    if "CLEAR" in clean_content.upper() or (state.user_clarification_answers and len(state.user_clarification_answers) > 20):
         return {"clarifying_questions": []}
 
     # Pass the entire conversational response back to the user
@@ -152,7 +153,7 @@ def generate_draft_node(state: PlanningState) -> dict:
         user_feedback=state.user_feedback or "No previous feedback.",
     )
 
-    response = _llm_draft.invoke(formatted)
+    response = llm_invoke_with_retry(_llm_draft, formatted)
     content = response.content
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     return {
@@ -173,7 +174,8 @@ def critique_node(state: PlanningState) -> dict:
     template_str = _load_prompt("planning_critique.txt")
     prompt = PromptTemplate.from_template(template_str)
 
-    response = _llm_critique.invoke(
+    response = llm_invoke_with_retry(
+        _llm_critique,
         prompt.format(user_req=state.user_req, plan_draft=state.plan_draft)
     )
     critique = response.content.strip()
@@ -220,9 +222,17 @@ def finalize_node(state: PlanningState) -> dict:
     """
     structured = parse_structured_output.invoke({"raw_output": state.plan_draft})
 
-    # Write the human-readable draft to a markdown file
-    output_file = Path(__file__).resolve().parents[4] / "final_plan.md"
+    # Write the human-readable draft to workspace root and scenario output/docs/
+    root_dir = Path(__file__).resolve().parents[4]
+    output_file = root_dir / "final_plan.md"
     output_file.write_text(state.plan_draft, encoding="utf-8")
+    try:
+        from agents.src.shared.tools import get_output_dir
+        docs_dir = get_output_dir() / "docs"
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        (docs_dir / "01_feasibility_plan.md").write_text(state.plan_draft, encoding="utf-8")
+    except Exception as e:
+        print(f"Failed to write 01_feasibility_plan.md: {e}")
 
     return {
         "final_plan": state.plan_draft,

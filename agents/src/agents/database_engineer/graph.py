@@ -42,7 +42,7 @@ def _should_revise_migrations(state: DatabaseEngineerState) -> str:
     If validation failed or migrations crashed, and we haven't hit the limit,
     loop back to rewrite the migrations. Otherwise end.
     """
-    max_iterations = 3
+    max_iterations = 1
     if not state.db_schema_ready and state.iteration_count < max_iterations:
         return "write_migrations"
     return "push_to_github"

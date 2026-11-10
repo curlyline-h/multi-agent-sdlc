@@ -208,7 +208,8 @@ def push_to_github(repo_name: str, agent_name: str, context: dict = None) -> dic
         print(f"[{agent_name}] GITHUB_TOKEN not found in environment. Skipping GitHub push.")
         return {}
 
-    output_dir = _ROOT_DIR / "output"
+    from agents.src.shared.tools import get_output_dir
+    output_dir = get_output_dir()
     if not output_dir.exists():
         print(f"[{agent_name}] No output directory found. Skipping GitHub push.")
         return {}
@@ -240,32 +241,62 @@ def push_to_github(repo_name: str, agent_name: str, context: dict = None) -> dic
         print(f"[{agent_name}] Failed to create repo: {api_res.status_code} {api_res.text}")
         return {}
 
-    # ── Step 2: Remove stale .git directory ─────────────────────
+    # ── Step 2: Initialize or reuse scenario .git directory ─────
     git_dir = output_dir / ".git"
-    if git_dir.exists():
-        def _force_remove(func, path, exc_info):
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        try:
-            shutil.rmtree(git_dir, onexc=_force_remove)
-            print(f"[{agent_name}] Cleared stale .git directory.")
-        except Exception:
-            subprocess.run(f'rmdir /s /q "{git_dir}"', shell=True, capture_output=True)
-            print(f"[{agent_name}] Cleared stale .git directory (fallback).")
+    is_new_git = not git_dir.exists()
 
     # ── Step 3: Build descriptive commit messages ────────────────
+    # If files_changed wasn't explicitly passed, auto-discover recently written files in output_dir
+    if not context.get("files_changed"):
+        discovered = []
+        for p in sorted(output_dir.rglob("*")):
+            if p.is_file() and not any(ig in p.parts for ig in (".git", "node_modules", ".next", "dist", "__pycache__")):
+                discovered.append(str(p.relative_to(output_dir)).replace("\\", "/"))
+        context["files_changed"] = discovered
+
     commit_message   = _build_commit_message(agent_name, context)
     project_name     = context.get("project_name", repo_name)
-    auth_url         = clone_url.replace("https://", f"https://{github_token}@")
-    branch_name      = f"feature/{agent_name.lower().replace(' ', '-')}-{int(time.time())}"
+    auth_url         = clone_url.replace("https://", f"https://x-access-token:{github_token}@")
+
+    # Discover linked Jira Ticket & GitHub Issue for this agent role from output/issue_board.json
+    linked_issues = []
+    issue_board_path = output_dir / "issue_board.json"
+    if issue_board_path.exists():
+        try:
+            import json as _json
+            ib = _json.loads(issue_board_path.read_text(encoding="utf-8"))
+            role_hint = context.get("scope", "") or agent_name.lower()
+            for iss in ib.get("issues", []):
+                r = iss.get("assignee_role", "").lower()
+                if r in agent_name.lower() or (role_hint == "api" and r == "backend") or (role_hint == "ui" and r == "frontend") or (role_hint == "db" and "database" in r) or (role_hint == "infra" and "devops" in r):
+                    linked_issues.append(iss)
+        except Exception:
+            pass
+
+    issue_slug = ""
+    issue_refs = []
+    for iss in linked_issues:
+        jkey = iss.get("jira_ticket_key", "")
+        gh_num = iss.get("github_issue_number")
+        if jkey and not issue_slug:
+            issue_slug = f"{jkey.lower()}-"
+        if jkey:
+            issue_refs.append(f"Refs {jkey}")
+        if gh_num:
+            issue_refs.append(f"Closes #{gh_num}")
+
+    if issue_refs:
+        ref_line = ", ".join(dict.fromkeys(issue_refs))
+        lines = commit_message.splitlines()
+        lines[0] = f"{lines[0]} ({ref_line})"
+        commit_message = "\n".join(lines)
+
+    branch_name = f"feature/{issue_slug}{agent_name.lower().replace(' ', '-')}-{int(time.time())}"
 
     print(f"\n[{agent_name}] Commit subject: {commit_message.splitlines()[0]}")
     print(f"[{agent_name}] Branch: {branch_name}")
 
     # ── Step 4: Git init, add, commit, push ─────────────────────
-    # We run two commits:
-    #   a) An initial empty commit on `main` so the branch has a base.
-    #   b) The real descriptive commit on the feature branch.
     initial_msg = (
         f"chore(init): initialise {project_name} repository\n\n"
         f"Created by {agent_name} on {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime())}."
@@ -275,7 +306,7 @@ def push_to_github(repo_name: str, agent_name: str, context: dict = None) -> dic
     gitignore_path = output_dir / ".gitignore"
     if not gitignore_path.exists():
         gitignore_content = """
-                                    node_modules/
+node_modules/
 .next/
 dist/
 build/
@@ -295,23 +326,32 @@ blob-report/
         gitignore_path.write_text(gitignore_content.strip(), encoding="utf-8")
         print(f"[{agent_name}] Generated .gitignore to prevent committing useless files.")
 
-    git_commands = [
-        "git init",
-        'git config user.email "[EMAIL_ADDRESS]"',
-        'git config user.name "Hamza Abbas"',
-        # Switch to main and make an empty base commit just in case it's a new repo
-        "git checkout -b main",
-        f'git commit --allow-empty -m "{initial_msg}"',
-        # Try to fetch the remote main branch. If it fails, we fall back to pushing our empty commit to initialize the remote repo.
-        f"git fetch {auth_url} main || true",
-        f"git reset FETCH_HEAD || git push -u {auth_url} main",
-        # Now checkout the feature branch. The working directory still has all our generated code untouched!
-        f"git checkout -b {branch_name}",
+    # Write commit message to a temp file outside tracked files to avoid shell-escaping issues with newlines/quotes
+    msg_file = _ROOT_DIR / ".tmp_commit_msg.txt"
+    msg_file.write_text(commit_message, encoding="utf-8")
+
+    git_commands = []
+    if is_new_git:
+        git_commands.extend([
+            "git init",
+            'git config user.email "hamzaabbas47698@gmail.com"',
+            'git config user.name "HamzaAbbas1122"',
+            "git checkout -b main",
+            f'git commit --allow-empty -m "{initial_msg}"',
+            f"git push -u -f {auth_url} main",
+        ])
+    else:
+        git_commands.extend([
+            'git config user.email "hamzaabbas47698@gmail.com"',
+            'git config user.name "HamzaAbbas1122"',
+        ])
+
+    git_commands.extend([
+        f"git checkout -B {branch_name}",
         "git add .",
-        f'git commit -m "{commit_message}" --allow-empty',
-        # Push feature branch. This commit will only contain the diff against the remote main branch!
+        f'git commit -F "{msg_file}" --allow-empty',
         f"git push -u -f {auth_url} {branch_name}",
-    ]
+    ])
 
     for cmd in git_commands:
         safe_cmd = cmd.replace(github_token, "***")
@@ -331,6 +371,14 @@ blob-report/
         except subprocess.CalledProcessError as e:
             safe_err = e.stderr.replace(github_token, "***").strip()
             print(f"[{agent_name}] ✗ {safe_cmd}: {safe_err}")
+
+    # Capture commit SHA
+    commit_sha = ""
+    try:
+        sha_res = subprocess.run("git rev-parse HEAD", shell=True, cwd=str(output_dir), capture_output=True, text=True)
+        commit_sha = sha_res.stdout.strip()
+    except Exception:
+        pass
 
     # ── Step 5: Create Pull Request with rich description ────────
     print(f"\n[{agent_name}] Creating descriptive Pull Request...")
@@ -359,15 +407,64 @@ blob-report/
         json=pr_data,
     )
 
+    pr_number = 0
+    pr_url = ""
     if pr_res.status_code == 201:
         pr_json   = pr_res.json()
-        pr_number = pr_json.get("number")
-        pr_url    = pr_json.get("html_url")
+        pr_number = pr_json.get("number", 0)
+        pr_url    = pr_json.get("html_url", "")
         print(f"[{agent_name}] ✓ Pull Request #{pr_number} created: {pr_url}")
-        return {"pr_number": pr_number, "pr_url": pr_url}
     elif pr_res.status_code == 422:
         print(f"[{agent_name}] PR creation returned 422 (may already exist): {pr_res.text}")
-        return {}
     else:
         print(f"[{agent_name}] Failed to create PR: {pr_res.status_code} {pr_res.text}")
-        return {}
+
+    # Persist structured Git/GitHub contribution telemetry
+    import json as _json
+    contrib_record = {
+        "agent_name": agent_name,
+        "repo_name": repo_name,
+        "branch_name": branch_name,
+        "commit_sha": commit_sha,
+        "commit_subject": commit_message.splitlines()[0] if commit_message else "",
+        "files_changed_count": len(context.get("files_changed", [])),
+        "linked_jira_tickets": [i.get("jira_ticket_key") for i in linked_issues if i.get("jira_ticket_key")],
+        "linked_github_issues": [i.get("github_issue_number") for i in linked_issues if i.get("github_issue_number")],
+        "pr_number": pr_number,
+        "pr_url": pr_url,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    try:
+        with open(output_dir / "git_contributions.jsonl", "a", encoding="utf-8") as cf:
+            cf.write(_json.dumps(contrib_record) + "\n")
+    except Exception:
+        pass
+
+    # Post contribution details (Commit SHA, Branch, PR URL, Files Changed) onto linked Jira & GitHub Issues
+    if linked_issues:
+        try:
+            from agents.src.shared.issue_tracker import record_agent_contribution_on_issues
+            record_agent_contribution_on_issues(
+                repo_name=repo_name,
+                agent_name=agent_name,
+                active_tasks=linked_issues,
+                commit_sha=commit_sha,
+                branch_name=branch_name,
+                pr_number=pr_number,
+                pr_url=pr_url,
+                files_changed=context.get("files_changed", []),
+            )
+        except Exception as e:
+            print(f"[{agent_name}] Warning posting contribution to issues: {e}")
+
+    try:
+        from backend.telemetry import broadcast_tool_call
+        broadcast_tool_call(
+            "push_to_github",
+            f"repo={repo_name} branch={branch_name} sha={commit_sha[:8]} pr=#{pr_number}",
+            agent_role=agent_name,
+        )
+    except Exception:
+        pass
+
+    return {"pr_number": pr_number, "pr_url": pr_url, "commit_sha": commit_sha, "branch_name": branch_name}
