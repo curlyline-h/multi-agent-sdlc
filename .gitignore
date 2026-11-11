@@ -11,8 +11,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -27,7 +27,6 @@ venv/
 ENV/
 env.bak/
 venv.bak/
-.pytest_cache/
 
 # Node
 node_modules/
@@ -48,18 +47,6 @@ yarn-error.log*
 .env.production.local
 *.env
 !.env.example
-
-# Runtime artifacts & databases (clean-up rules)
-checkpoints.sqlite
-checkpoints.sqlite-*
-backend/database.sqlite
-backend/database.sqlite-*
-*.sqlite
-*.sqlite3
-postgres_debug.log
-*.log
-.active_session.json
-output/
 
 # IDEs
 .idea/
@@ -82,22 +69,10 @@ output/
 .DS_Store
 Thumbs.db
 
-# Temporary scratch & execution artifacts
-.tmp*
-*.tmp
-debug_*.txt
-tasks-proj.json
-uv.lock
-output_archive/
+# Generated projects & runtime/build artifacts
+projects/
+output/
+target/
+playwright-report/
+test-results/
 
-# LaTeX build intermediates
-*.aux
-*.bbl
-*.blg
-*.out
-*.synctex.gz
-*.fdb_latexmk
-*.fls
-*.xdv
-
-# Final release v1.0 cleanup - 2026-11-09 16:45:00
