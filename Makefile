@@ -7,14 +7,13 @@ dev:
 	docker compose up
 
 test:
-	pytest agents/tests
+	pytest backend/tests agents/tests
 
 lint:
-	black --check backend agents shared data_scripts
-	isort --check-only backend agents shared data_scripts
-	flake8 backend agents shared data_scripts
+	black --check backend agents shared
+	isort --check-only backend agents shared
+	flake8 backend agents shared
 
 format:
-	black backend agents shared data_scripts
-	isort backend agents shared data_scripts
-
+	black backend agents shared
+	isort backend agents shared

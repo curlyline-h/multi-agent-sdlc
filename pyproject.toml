@@ -2,10 +2,28 @@
 name = "enterprise-ai-sdlc"
 version = "0.1.0"
 description = "Multi-Agent SDLC Platform"
-authors = ["Hamza Abbas", "Hania Zahra", "Muhammad Abdullah"]
+authors = ["Orax Technologies <info@orax.com>"]
+package-mode = false  
 
 [tool.poetry.dependencies]
 python = "^3.11"
+langgraph = {extras = ["sqlite"], version = "^1.2.20"}
+python-dotenv = "^1.2.4"
+langchain-groq = "^1.1.3"
+langchain-community = ">=0.2.0"
+langchain-ollama = "^1.1.0"
+langgraph-checkpoint-sqlite = "^3.1.3"
+psycopg2-binary = "^2.9.13"
+fastapi = "^0.162.4"
+uvicorn = "^0.54.0"
+jira = "^3.10.5"
+slack-sdk = "^3.46.0"
+langchain-huggingface = "^1.2.3"
+sentence-transformers = "^6.2.0"
+greenlet = "^3.5.6"
+duckduckgo-search = "^8.1.1"
+ddgs = "^9.16.1"
+langchain-google-genai = "^4.5.0"
 
 [tool.black]
 line-length = 88
@@ -29,3 +47,5 @@ profile = "black"
 line_length = 88
 multi_line_output = 3
 
+[tool.pyrefly]
+python-interpreter-path = "C:\\Users\\malik\\AppData\\Local\\pypoetry\\Cache\\virtualenvs\\enterprise-ai-sdlc-dJiv9WXx-py3.14\\Scripts\\python.exe"
