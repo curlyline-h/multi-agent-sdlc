@@ -3,11 +3,12 @@ Shared Agent Tools — Generic terminal execution tool.
 """
 import subprocess
 from pathlib import Path
+from typing import Any
 from langchain_core.tools import tool as _lc_tool
 import functools
 import json
 
-def agent_tool(*args, **kwargs):
+def agent_tool(*args: Any, **kwargs: Any) -> Any:
     """
     A wrapper around LangChain's @tool decorator that automatically
     broadcasts tool executions to the UI.
@@ -23,10 +24,7 @@ def agent_tool(*args, **kwargs):
                     broadcast_tool_call(func.__name__, arg_str[:250])
             except Exception:
                 pass
-            try:
-                return func(*f_args, **f_kwargs)
-            except Exception as tool_exc:
-                return f"Tool error in {func.__name__}: {tool_exc}"
+            return func(*f_args, **f_kwargs)
         return _lc_tool(*args, **kwargs)(wrapper)
         
     if len(args) == 1 and callable(args[0]) and not kwargs:
@@ -37,87 +35,27 @@ def agent_tool(*args, **kwargs):
 
 tool = agent_tool
 
-import os
+from agents.src.shared.workspace import get_output_dir
 
 _ROOT_DIR = Path(__file__).resolve().parents[3]
-_OUTPUT_DIR = _ROOT_DIR / "output"
-
-
-def get_output_dir() -> Path:
-    """
-    Returns the active scenario's dedicated working directory `output/<scenario_id>/`
-    when `USE_SCENARIO_SUBDIR=1` or when `output/<scenario_id>` exists, falling back to `output/`.
-    """
-    scen_id = os.environ.get("ACTIVE_SCENARIO_ID", "").strip()
-    base = _ROOT_DIR / "output"
-    if scen_id and (os.environ.get("USE_SCENARIO_SUBDIR") == "1" or (base / scen_id).exists()):
-        out = base / scen_id
-    else:
-        out = base
-    out.mkdir(parents=True, exist_ok=True)
-    return out
-
-
-def _clean_rel_path(p: str) -> str:
-    clean_p = (p or "").strip().lstrip("/")
-    scen_id = os.environ.get("ACTIVE_SCENARIO_ID", "").strip()
-    if clean_p == "output" or (scen_id and clean_p == f"output/{scen_id}"):
-        return ""
-    if scen_id and clean_p.startswith(f"output/{scen_id}/"):
-        clean_p = clean_p[len(f"output/{scen_id}/"):]
-    elif clean_p.startswith("output/"):
-        clean_p = clean_p[7:]
-    if scen_id and clean_p.startswith(f"{scen_id}/"):
-        clean_p = clean_p[len(f"{scen_id}/"):]
-    return clean_p
-
-
-@tool
-def write_file(file_path: str, content: str) -> str:
-    """
-    Creates or overwrites a file in the project's output directory with the given content.
-    Parent directories are created automatically.
-    Args:
-        file_path: Relative path of the file inside the project output directory (e.g. 'src/main.py', 'db/init.sql').
-        content: Full text content to write into the file.
-    """
-    out_dir = get_output_dir()
-    clean_p = _clean_rel_path(file_path)
-    if not clean_p:
-        return "Error: file_path cannot be empty."
-    target = out_dir / clean_p
-    try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        try:
-            from backend.telemetry import broadcast_tool_call
-            broadcast_tool_call(
-                "create_file",
-                clean_p,
-                event_type="FILE_CHANGE",
-                payload_extra={"path": clean_p, "action": "CREATED", "diff": f"+ Wrote {clean_p} ({len(content)} chars)"},
-            )
-        except Exception:
-            pass
-        return f"SUCCESS: Wrote {len(content)} characters to {clean_p}."
-    except Exception as e:
-        return f"Error writing file {clean_p}: {e}"
 
 
 @tool
 def run_terminal_command(command: str) -> str:
     """
-    Executes any generic shell / terminal command inside the project's output directory.
+    Executes any generic shell / terminal command inside the active project directory.
     Args:
         command: The exact shell command line string to execute (e.g. 'npm install axios', 'python script.py').
     """
-    out_dir = get_output_dir()
+    output_dir = get_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Non-blocking non-interactive auto-fix for npm install
     if command.startswith("npm install") and "--legacy-peer-deps" not in command:
         command += " --legacy-peer-deps"
     
     # Auto-fix Windows cmd.exe incompatible commands
+    import os
     if os.name == 'nt':
         if command.strip().startswith("mkdir -p "):
             command = command.replace("mkdir -p ", "mkdir ")
@@ -125,19 +63,13 @@ def run_terminal_command(command: str) -> str:
             command = command.replace("rm -rf ", "rmdir /s /q ")
         
     try:
-        res = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(out_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=180
-        )
-        stdout = res.stdout.strip()
-        stderr = res.stderr.strip()
-        
+        from agents.src.shared.proc import run_command_safe
+        returncode, stdout, stderr, timed_out = run_command_safe(command, output_dir, timeout=180)
+        stdout = stdout.strip()
+        stderr = stderr.strip()
+        if timed_out:
+            return f"COMMAND_TIMEOUT: Command '{command}' timed out after 180s and was terminated."
+
         try:
             from backend.telemetry import broadcast_tool_call
             
@@ -149,36 +81,31 @@ def run_terminal_command(command: str) -> str:
                     "command": command,
                     "stdout": stdout,
                     "stderr": stderr,
-                    "exit_code": res.returncode
+                    "exit_code": returncode
                 }
             )
         except Exception:
             pass
 
-        if res.returncode == 0:
+        if returncode == 0:
             output = stdout or stderr or "Command completed with exit code 0."
             return f"COMMAND_SUCCESS ({command}):\n{output[-2000:]}"
         else:
             output = stderr or stdout or "Command failed."
-            return f"COMMAND_FAILED (exit code {res.returncode}):\n{output[-2000:]}"
-    except subprocess.TimeoutExpired:
-        return f"COMMAND_TIMEOUT: Command '{command}' timed out after 180s."
+            return f"COMMAND_FAILED (exit code {returncode}):\n{output[-2000:]}"
     except Exception as e:
         return f"COMMAND_ERROR: {e}"
 
 
 @tool
-def list_directory(path: str = "", depth: int = 1) -> str:
+def list_directory(path: str) -> str:
     """
-    Lists the files and directories in the given path within the project output directory.
+    Lists the files and directories in the given path within the output/ directory.
     Use this to explore the project structure and find exact file paths for imports or edits.
     Args:
         path: Directory path relative to output/ (e.g., '', 'src', 'src/components'). Use '' for root.
-        depth: Optional directory listing depth (default 1).
     """
-    out_dir = get_output_dir()
-    clean_p = _clean_rel_path(path)
-    target = (out_dir / clean_p) if clean_p else out_dir
+    target = get_output_dir() / path.strip("/")
     if not target.exists():
         return f"Error: Directory '{path}' does not exist."
     if not target.is_dir():
@@ -223,6 +150,48 @@ def fetch_server_logs(lines: int = 100) -> str:
         return f"Error fetching logs: {e}"
 
 
+@tool
+def write_file(file_path: str, content: str) -> str:
+    """
+    Creates or overwrites a file in the active project workspace with full source code.
+    Automatically creates parent directories and updates the UI Explorer in real time.
+    Args:
+        file_path: Path to the file relative to the project root (e.g. 'src/App.tsx' or 'pom.xml').
+        content: Complete, runnable file contents (no placeholders).
+    """
+    clean = (file_path or "").strip().lstrip("/").lstrip("\\")
+    if clean.startswith("output/") or clean.startswith("output\\"):
+        clean = clean[7:]
+    if not clean or ".." in Path(clean).parts:
+        return f"Error: Invalid file path '{file_path}'."
+
+    output_dir = get_output_dir()
+    target = (output_dir / clean).resolve()
+    try:
+        target.relative_to(output_dir.resolve())
+    except ValueError:
+        return f"Error: Path '{file_path}' escapes project workspace."
+
+    try:
+        action = "MODIFIED" if target.exists() else "CREATED"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content or "", encoding="utf-8")
+        rel_p = str(target.relative_to(output_dir.resolve())).replace("\\", "/")
+        try:
+            from backend.telemetry import broadcast_tool_call
+            broadcast_tool_call(
+                "create_file",
+                rel_p,
+                event_type="FILE_CHANGE",
+                payload_extra={"path": rel_p, "action": action, "diff": f"+ {action.title()} {rel_p}"},
+            )
+        except Exception:
+            pass
+        return f"SUCCESS: Wrote {rel_p} ({len(content or '')} chars)."
+    except Exception as e:
+        return f"Error writing file '{file_path}': {e}"
+
+
 import glob
 @tool
 def replace_file_content(file_path: str, target_string: str, replacement_string: str) -> str:
@@ -235,9 +204,7 @@ def replace_file_content(file_path: str, target_string: str, replacement_string:
         target_string: The exact string block to replace.
         replacement_string: The string block to insert in its place.
     """
-    out_dir = get_output_dir()
-    clean_p = _clean_rel_path(file_path)
-    target = out_dir / clean_p
+    target = get_output_dir() / file_path
     if not target.exists():
         return f"Error: File {file_path} does not exist."
         
@@ -258,7 +225,7 @@ def replace_file_content(file_path: str, target_string: str, replacement_string:
 
 
 @tool
-def read_file_range(file_path: str, start_line: int = 1, end_line: int = 200) -> str:
+def read_file_range(file_path: str, start_line: int, end_line: int) -> str:
     """
     Reads a specific line range from a file (1-indexed) in the output directory
     to prevent fetching massive files.
@@ -267,9 +234,7 @@ def read_file_range(file_path: str, start_line: int = 1, end_line: int = 200) ->
         start_line: The line number to start reading from (inclusive).
         end_line: The line number to end reading (inclusive).
     """
-    out_dir = get_output_dir()
-    clean_p = _clean_rel_path(file_path)
-    target = out_dir / clean_p
+    target = get_output_dir() / file_path
     if not target.exists():
         return f"Error: File {file_path} does not exist."
         
@@ -295,24 +260,21 @@ def read_file_range(file_path: str, start_line: int = 1, end_line: int = 200) ->
 
 
 @tool
-def semantic_code_search(query: str, path: str = "") -> str:
+def semantic_code_search(query: str) -> str:
     """
     Searches previously written code to find utility functions or router patterns.
     Uses basic keyword matching across the output/ directory.
     Args:
         query: What to search for (e.g., 'auth', 'database connection').
-        path: Optional subdirectory relative to output/ to restrict search.
     """
     output_dir = get_output_dir()
-    clean_sub = _clean_rel_path(path)
-    search_root = (output_dir / clean_sub) if clean_sub and (output_dir / clean_sub).exists() else output_dir
     matches = []
     
     # Common code file extensions
-    extensions = ["*.py", "*.ts", "*.js", "*.java", "*.go", "*.rs", "*.tsx", "*.jsx", "*.sql", "*.yaml", "*.json"]
+    extensions = ["*.py", "*.ts", "*.js", "*.java", "*.go", "*.rs", "*.tsx", "*.jsx"]
     
     for ext in extensions:
-        for f in glob.glob(str(search_root / "**" / ext), recursive=True):
+        for f in glob.glob(str(output_dir / "**" / ext), recursive=True):
             if "node_modules" in f or "/.git/" in f or "\\.git\\" in f or ".next" in f:
                 continue
             
@@ -373,6 +335,6 @@ def rag_search(query: str, k: int = 5) -> str:
 
 from agents.src.shared.llm import safe_web_search
 @tool
-def search_web(query: str, path: str = "") -> str:
+def search_web(query: str) -> str:
     """Performs a web search to find current information or documentation."""
     return safe_web_search(query)
