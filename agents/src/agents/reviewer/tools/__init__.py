@@ -10,9 +10,9 @@ import subprocess
 from pathlib import Path
 
 # Re-export generic terminal tool so nodes can import it from this package
-from agents.src.shared.tools import run_terminal_command, get_output_dir  # noqa: F401
+from agents.src.shared.tools import run_terminal_command  # noqa: F401
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 
 @tool
@@ -46,19 +46,14 @@ def leave_pr_comment(github_repo_name: str, pr_number: int, comment_body: str, i
     if not github_repo_name or not pr_number:
         return "ERROR: github_repo_name or pr_number is missing."
         
-    # Always write local review artifact as well
-    try:
-        out_dir = get_output_dir()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        review_file = out_dir / "CODE_REVIEW.md"
-        status = "APPROVED" if is_approved else "CHANGES REQUESTED"
-        review_file.write_text(f"# PR #{pr_number} Review\n**Status:** {status}\n\n{comment_body}\n", encoding="utf-8")
-    except Exception:
-        pass
-
     github_token = os.getenv("GITHUB_TOKEN")
     if not github_token:
-        return f"SUCCESS: Token missing, wrote review to CODE_REVIEW.md"
+        # Fallback to local markdown file if no token
+        review_file = get_output_dir() / "CODE_REVIEW.md"
+        status = "APPROVED" if is_approved else "CHANGES REQUESTED"
+        content = f"# PR #{pr_number} Review\n**Status:** {status}\n\n{comment_body}\n"
+        review_file.write_text(content, encoding="utf-8")
+        return f"SUCCESS: Token missing, wrote review to {review_file.name}"
         
     headers = {
         "Authorization": f"token {github_token}",
@@ -79,17 +74,6 @@ def leave_pr_comment(github_repo_name: str, pr_number: int, comment_body: str, i
     res = requests.post(url, headers=headers, json=payload)
     if res.status_code == 200:
         return f"SUCCESS: PR #{pr_number} review submitted as {event}."
-    elif res.status_code == 422:
-        # GitHub REST API forbids APPROVE / REQUEST_CHANGES on one's own PR; fallback to COMMENT event
-        badge = "✅ **APPROVED**" if is_approved else "⚠️ **CHANGES REQUESTED**"
-        fallback_payload = {
-            "body": f"{badge} (Automated Reviewer Agent)\n\n{comment_body}",
-            "event": "COMMENT"
-        }
-        res2 = requests.post(url, headers=headers, json=fallback_payload)
-        if res2.status_code == 200:
-            return f"SUCCESS: PR #{pr_number} review submitted as COMMENT ({event})."
-        return f"FAILED to submit PR review fallback: {res2.status_code} {res2.text}"
     else:
         return f"FAILED to submit PR review: {res.status_code} {res.text}"
 
