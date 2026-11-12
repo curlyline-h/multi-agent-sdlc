@@ -1,34 +1,40 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useChatStore } from '@/store/chatStore';
 import { useProjectViewStore } from '@/store/projectViewStore';
+import { useTerminalStore } from '@/store/terminalStore';
 import { AGENT_DISPLAY } from '@/types/agent';
 import { AgentStateIndicator } from '@/components/chat/AgentStateIndicator';
 import { PIPELINE_PHASES, PARENT_GRAPH_NODES, PARENT_GRAPH_EDGES } from '@/lib/graphData';
 import { Workflow } from '@/types/workflow';
-import { disconnectRealWorkflow } from '@/lib/realWorkflow';
-import { Wifi, WifiOff, Activity, Plus } from 'lucide-react';
+import { connectRealWorkflow, disconnectRealWorkflow } from '@/lib/realWorkflow';
+import { listProjects, stopProject } from '@/lib/api';
+import { Wifi, WifiOff, Activity, Plus, History, Square } from 'lucide-react';
 
 export function Header() {
   const { currentWorkflow, setCurrentWorkflow, setActiveSubgraph } = useWorkflowStore();
   const { activeAgent, activeAgentState, isConnected } = useChatStore();
-
   const agentDisplay = activeAgent ? AGENT_DISPLAY[activeAgent] : null;
+  const [sessions, setSessions] = useState<Array<{ id: number; title?: string; description?: string; current_status?: string }>>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState<string>('');
 
-  const handleNewProject = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('activeProjectId');
-    }
+  useEffect(() => {
+    const refresh = () => {
+      listProjects().then(setSessions).catch(() => {});
+      if (typeof window !== 'undefined') {
+        setSelectedSessionId(localStorage.getItem('activeProjectId') || '');
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, 10000);
+    return () => clearInterval(timer);
+  }, []);
 
-    // Disconnect previous websocket
+  const resetWorkspaceUi = (phaseLabel = 'Ready for Prompt') => {
     disconnectRealWorkflow();
-
-    // Reset chat store
     useChatStore.getState().resetAll();
-
-    // Reset workflow graph and subgraph
     const resetWorkflow: Workflow = {
       id: `wf-${Date.now()}`,
       projectId: 'new-project',
@@ -36,17 +42,47 @@ export function Header() {
       nodes: PARENT_GRAPH_NODES.map((n) => ({ ...n, status: 'pending' as const })),
       edges: [...PARENT_GRAPH_EDGES],
       createdAt: new Date().toISOString(),
-      currentPhase: 'Requirements & Planning',
+      currentPhase: phaseLabel,
       currentPhaseIndex: 0,
       totalPhases: 6,
     };
     setCurrentWorkflow(resetWorkflow);
     setActiveSubgraph(null);
-
-    // Reset project view (files, diffs, documents)
     useProjectViewStore.getState().setFileTree([]);
     useProjectViewStore.getState().setDiffs([]);
     useProjectViewStore.getState().setDocuments([]);
+    useTerminalStore.getState().clearSession('agent-terminal');
+  };
+
+  const handleNewProject = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('activeProjectId');
+    }
+    setSelectedSessionId('');
+    resetWorkspaceUi('Ready for Prompt');
+  };
+
+  const handleSelectSession = (sessionId: string) => {
+    if (!sessionId) {
+      handleNewProject();
+      return;
+    }
+    setSelectedSessionId(sessionId);
+    resetWorkspaceUi('Loading Session...');
+    connectRealWorkflow(sessionId);
+  };
+
+  const handleStopSession = async () => {
+    const activeId = selectedSessionId || (typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : '') || '';
+    if (activeId) {
+      await stopProject(activeId).catch(() => {});
+    }
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('activeProjectId');
+    }
+    setSelectedSessionId('');
+    resetWorkspaceUi('Stopped (Closed)');
+    listProjects().then(setSessions).catch(() => {});
   };
 
   // Calculate pipeline progress
@@ -75,6 +111,43 @@ export function Header() {
           <Plus size={14} />
           <span>New Project</span>
         </button>
+
+        {(selectedSessionId || currentWorkflow?.status === 'running') && (
+          <button
+            onClick={handleStopSession}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600/90 hover:bg-red-500 text-white text-xs font-medium rounded-lg shadow-sm transition-all cursor-pointer"
+            title="Stop active session"
+          >
+            <Square size={12} fill="currentColor" />
+            <span>Stop</span>
+          </button>
+        )}
+
+        {sessions.length > 0 && (
+          <div className="flex items-center gap-1.5 bg-[var(--bg-primary)] border border-[var(--border-subtle)] rounded-lg px-2 py-1">
+            <History size={13} className="text-[var(--text-dim)]" />
+            <select
+              value={selectedSessionId}
+              onChange={(e) => handleSelectSession(e.target.value)}
+              className="bg-transparent text-xs text-[var(--text-primary)] outline-none cursor-pointer max-w-[190px]"
+              title="Switch previous session chat history"
+            >
+              <option value="" className="bg-[var(--bg-secondary)]">New Session</option>
+              {sessions.map((s) => {
+                const isStopped = s.current_status === 'STOPPED';
+                return (
+                  <option
+                    key={s.id}
+                    value={String(s.id)}
+                    className="bg-[var(--bg-secondary)]"
+                  >
+                    #{s.id}{isStopped ? ' [STOPPED]' : ''}: {(s.description || s.title || 'Project').slice(0, 24)}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Center: Pipeline progress */}
