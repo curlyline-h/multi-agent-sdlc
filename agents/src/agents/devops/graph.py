@@ -97,13 +97,9 @@ workflow.add_conditional_edges(
 # Execution phase
 workflow.add_edge("execute_deployment", "push_to_github")
 workflow.add_edge("push_to_github", "verify_health")
-workflow.add_edge("verify_health", "mark_task_complete")
-workflow.add_edge("mark_task_complete", "pop_task")
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 devops_subgraph = workflow.compile(checkpointer=checkpointer)
 
@@ -119,7 +115,7 @@ if __name__ == "__main__":
         "workflow_tasks": [{"id": 1, "title": "Setup Docker and CI/CD"}],
         "current_task": None,
         "iteration_count": 0,
-        "github_repo_name": "hamza_sdlc_auto"
+        "github_repo_name": "multi_agent_sdlc_auto"
     }
     
     config: RunnableConfig = {"configurable": {"thread_id": str(uuid.uuid4())}}

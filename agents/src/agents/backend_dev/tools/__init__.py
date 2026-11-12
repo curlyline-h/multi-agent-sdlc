@@ -9,9 +9,9 @@ from agents.src.shared.tools import tool
 import subprocess
 import glob
 import re
-from agents.src.shared.tools import run_terminal_command, get_output_dir
+from agents.src.shared.tools import run_terminal_command
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 # ---------------------------------------------------------------------------
 # Helper: Detect project type from output/ directory
@@ -28,12 +28,6 @@ def _detect_stack(output_dir: Path) -> str:
         return "go"
     elif (output_dir / "Cargo.toml").exists():
         return "rust"
-    elif (output_dir / "Gemfile").exists():
-        return "ruby"
-    elif (output_dir / "composer.json").exists():
-        return "php"
-    elif any(output_dir.glob("*.csproj")) or any(output_dir.glob("*.sln")):
-        return "dotnet"
     return "unknown"
 
 
@@ -63,12 +57,6 @@ def code_linter(file_path: str) -> str:
         cmd = "go vet ./..."
     elif stack == "rust":
         cmd = "cargo check"
-    elif stack == "dotnet":
-        cmd = "dotnet build --nologo -v q"
-    elif stack == "ruby":
-        cmd = "bundle exec rubocop -l"
-    elif stack == "php":
-        cmd = "php -l ."
     else:
         return "LINT_PASSED"
     
@@ -81,10 +69,10 @@ def code_linter(file_path: str) -> str:
         )
         try:
             stdout, stderr = proc.communicate(timeout=30)
-            errors = (stdout or stderr or "")
-            if proc.returncode == 0 or proc.returncode == 127 or "not found" in errors.lower() or "not the tsc command" in errors.lower():
+            if proc.returncode == 0:
                 return "LINT_PASSED"
             else:
+                errors = (stdout or stderr or "")
                 return f"LINT_FAILED:\n{errors[-2000:]}"
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -95,7 +83,7 @@ def code_linter(file_path: str) -> str:
 
 
 @tool
-def run_unit_tests(test_file_path: str = ".") -> str:
+def run_unit_tests(test_file_path: str) -> str:
     """
     Runs the appropriate test suite based on the detected tech stack.
     - Node: npm test
@@ -114,8 +102,6 @@ def run_unit_tests(test_file_path: str = ".") -> str:
         "java": "mvn test -q",
         "go": "go test ./...",
         "rust": "cargo test",
-        "dotnet": "dotnet test --nologo -v q",
-        "ruby": "bundle exec rspec",
     }
     
     cmd = commands.get(stack)
@@ -127,10 +113,10 @@ def run_unit_tests(test_file_path: str = ".") -> str:
             cmd, shell=True, cwd=str(output_dir),
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
         )
-        errors = (result.stdout or "") + (result.stderr or "")
-        if result.returncode in (0, 5, 127) or "not found" in errors.lower() or "no test files" in errors.lower() or "no tests ran" in errors.lower():
+        if result.returncode == 0:
             return "TESTS_PASSED"
         else:
+            errors = result.stdout or result.stderr
             return f"TESTS_FAILED:\n{errors[-2000:]}"
     except subprocess.TimeoutExpired:
         return "TESTS_PASSED"
