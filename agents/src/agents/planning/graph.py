@@ -48,10 +48,10 @@ def _should_loop_clarification(state: PlanningState) -> str:
 
 def _should_revise_after_critique(state: PlanningState) -> str:
     """
-    If the critique found issues and we haven't exceeded 1 iteration,
+    If the critique found issues and we haven't exceeded 3 iterations,
     loop back to generate another draft. Otherwise proceed to user approval.
     """
-    max_iterations = 1
+    max_iterations = 3
     has_issues = (
         state.critique_notes
         and "NO_ISSUES_FOUND" not in state.critique_notes.upper()
@@ -122,11 +122,9 @@ workflow.add_conditional_edges(
 
 workflow.add_edge("finalize", END)
 
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 planning_subgraph = workflow.compile(checkpointer=checkpointer)
 

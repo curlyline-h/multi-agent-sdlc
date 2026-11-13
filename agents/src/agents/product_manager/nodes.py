@@ -7,12 +7,13 @@ PHASE A: PRD Writing
 PHASE B: Jira + Slack (triggered separately after Task Breakdown)
   create_slack_channel_node → create_jira_epic_node → create_jira_tickets_node → notify_slack_node
 """
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 from langchain_core.prompts import PromptTemplate
-from agents.src.shared.llm import get_llm, llm_invoke_with_retry
+from agents.src.shared.llm import get_llm, llm_invoke_with_retry, needs_external_research
 from langgraph.types import interrupt
 
 from agents.src.agents.product_manager.state import ProductManagerState
@@ -28,8 +29,8 @@ from agents.src.shared.tools import rag_search
 # LLM setup
 # ---------------------------------------------------------------------------
 _llm = get_llm(
-    temperature=0.2,
-    max_tokens=2500 
+    temperature=0.4,
+    max_tokens=4000 
 )
 
 _PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
@@ -49,17 +50,7 @@ def research_node(state: ProductManagerState) -> dict:
     Performs web search for competitor analysis and RAG search for past PRDs.
     Optionally skips this if the request is for a generic new project.
     """
-    from langchain_core.prompts import PromptTemplate
-    decision_prompt = PromptTemplate.from_template(
-        "Does this user request require researching an existing internal codebase or finding external web documentation? "
-        "Reply with ONLY 'YES' or 'NO'.\n\nRequest: {req}"
-    )
-    decision = llm_invoke_with_retry(_llm, decision_prompt.format(req=state.user_req)).content.strip().upper()
-    
-    import re
-    decision = re.sub(r'<think>.*?</think>', '', decision, flags=re.DOTALL).strip()
-    
-    if "YES" not in decision:
+    if not needs_external_research(state.user_req):
         return {"web_search_results": ["Skipped web search for new generic project.", "Skipped internal RAG search for new generic project."]}
 
     # Web search (DuckDuckGo)
@@ -97,7 +88,7 @@ def write_prd_node(state: ProductManagerState) -> dict:
         user_feedback=state.user_feedback or "No previous feedback.",
     )
 
-    response = llm_invoke_with_retry(_llm, formatted)
+    response = llm_invoke_with_retry(_llm, formatted, label="PM-PRD")
     content = response.content
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     return {
@@ -141,15 +132,13 @@ def finalize_prd_node(state: ProductManagerState) -> dict:
     slug = "-".join(words[:4]).strip("-")
     channel_name = f"proj-{slug}"[:80].strip("-")
     
-    # Save the approved PRD to the workspace root and scenario output/docs/
-    workspace_root = Path(__file__).resolve().parents[4]
-    prd_path = workspace_root / "final_prd.md"
+    # Save the approved PRD inside the active project directory
+    from agents.src.shared.workspace import get_artifact_path, ENV_PROJECT_DIR_KEY, set_active_project_dir
+    if not os.environ.get(ENV_PROJECT_DIR_KEY):
+        set_active_project_dir(channel_name)
+    prd_path = get_artifact_path("final_prd.md")
     try:
         prd_path.write_text(state.prd_draft, encoding="utf-8")
-        from agents.src.shared.tools import get_output_dir
-        docs_dir = get_output_dir() / "docs"
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        (docs_dir / "02_prd.md").write_text(state.prd_draft, encoding="utf-8")
     except Exception as e:
         print(f"Failed to write PRD to {prd_path}: {e}")
 
@@ -172,14 +161,9 @@ def create_slack_channel_node(state: ProductManagerState) -> dict:
     """
     try:
         result = create_slack_channel.invoke({"channel_name": state.project_name})
-        if isinstance(result, dict):
-            return {
-                "slack_channel_id": result.get("channel_id", "#general"),
-                "slack_channel_name": result.get("channel_name", state.project_name),
-            }
         return {
-            "slack_channel_id": "#general",
-            "slack_channel_name": state.project_name,
+            "slack_channel_id": result.get("channel_id", "#general"),
+            "slack_channel_name": result.get("channel_name", state.project_name),
         }
     except Exception as e:
         print(f"Failed to create Slack channel: {e}")

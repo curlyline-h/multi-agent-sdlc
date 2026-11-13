@@ -29,5 +29,6 @@ class WorkflowState(BaseModel):
     reviewer_approved: bool = Field(default=False, description="Whether static analysis passed")
     security_approved: bool = Field(default=False, description="Whether security scan passed")
     github_repo_name: str = Field(default="", description="The repository name for GitHub API calls")
-    jira_epic_key: str = Field(default="", description="Jira Epic key created for this workflow")
-    jira_ticket_keys: List[str] = Field(default_factory=list, description="Jira child ticket keys created for this workflow")
+    dispatcher_iteration_count: int = Field(default=0, description="Persisted dispatcher loop counter for crash-safe resumes")
+    dispatcher_last_dispatch: str = Field(default="", description="Persisted last dispatch key for loop detection")
+    parallel_tasks_by_role: Dict[str, List[Dict[str, Any]]] = Field(default_factory=dict, description="Ready tasks grouped by role for concurrent execution")
