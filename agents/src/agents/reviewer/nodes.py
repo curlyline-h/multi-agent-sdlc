@@ -1,12 +1,12 @@
-"""
-Reviewer Agent — Node Functions
+﻿"""
+Reviewer Agent â€” Node Functions
 
 Flow:
-  pop_task → analyze_complexity → review_code → submit_review → mark_task_complete → pop_task
+  pop_task â†’ analyze_complexity â†’ review_code â†’ submit_review â†’ mark_task_complete â†’ pop_task
 """
 from pathlib import Path
 from langchain_core.prompts import PromptTemplate
-from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry
+from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry, execute_tool_calls
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
@@ -46,58 +46,12 @@ def analyze_complexity_node(state: ReviewerState) -> dict:
     report = run_complexity_analysis.invoke({})
     return {"complexity_report": report}
 
+from agents.src.shared.context import build_codebase_context
+
 def _get_code_under_review() -> str:
-    from agents.src.shared.tools import get_output_dir
-    root_dir = Path(__file__).resolve().parents[4]
-    output_dir = get_output_dir()
-    if not output_dir.exists():
-        return "No generated output code found."
-        
-    code_blocks = []
-    omitted_files = []
-    allowed_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".css", ".json", ".md", ".html"}
-    ignored_dirs = {"node_modules", ".git", ".next", "dist", "build"}
-    
-    # Establish a maximum character budget for the entire code snippet
-    import os
-    provider = os.getenv("LLM_PROVIDER", "groq").lower()
-    MAX_TOTAL_CHARS = 12000 if provider == "groq" else 60000
-    current_total_chars = 0
-    
-    for path in sorted(output_dir.rglob("*")):
-        if path.is_file():
-            if any(part in ignored_dirs for part in path.parts):
-                continue
-            if path.suffix in allowed_extensions:
-                rel_path = path.relative_to(root_dir)
-                
-                # Check budget before reading
-                if current_total_chars >= MAX_TOTAL_CHARS:
-                    omitted_files.append(str(rel_path))
-                    continue
-                    
-                try:
-                    content = path.read_text(encoding="utf-8")
-                    # Limit individual file size to prevent single file hijacking
-                    if len(content) > 8000:
-                        content = content[:8000] + "\n... [TRUNCATED DUE TO FILE SIZE] ..."
-                    
-                    block = f"File: {rel_path}\n```\n{content}\n```"
-                    code_blocks.append(block)
-                    current_total_chars += len(block)
-                except Exception as e:
-                    code_blocks.append(f"File: {rel_path} (Error reading file: {e})")
-                    
-    if not code_blocks and not omitted_files:
-        return "No source code files found in output directory."
-        
-    result = "\n\n".join(code_blocks)
-    if omitted_files:
-        result += "\n\n### ⚠️ The following files were omitted from this prompt due to context size limits:\n"
-        result += "\n".join(f"- {f}" for f in omitted_files)
-        result += "\n\n*Please advise if the Reviewer needs to inspect these files specifically.*"
-        
-    return result
+    return build_codebase_context(
+        empty_message="No generated output code found.",
+    )
 
 # ---------------------------------------------------------------------------
 # 2. Review Code Node
@@ -152,9 +106,9 @@ def review_code_node(state: ReviewerState) -> dict:
     ]
     
     # ReAct Loop
-    for turn in range(15):
+    for turn in range(8):
         try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="Reviewer")
+            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="Reviewer", tools=tools_list)
         except Exception as e:
             if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
                 import ast
@@ -189,25 +143,17 @@ def review_code_node(state: ReviewerState) -> dict:
             break
             
         tool_map = {tool.name: tool for tool in tools_list}
-        for tool_call in response.tool_calls:
-            name = tool_call["name"]
-            print(f"Agent calling tool: {name} with args {tool_call['args']}")
-            if name in tool_map:
-                result = tool_map[name].invoke(tool_call["args"])
-            else:
-                result = f"Error: Tool {name} not found."
-            messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
+        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="Reviewer"))
 
     try:
-        # Find the content containing the JSON (only from assistant responses in messages[2:])
+        # Find the content containing the JSON
         content = ""
-        for msg in reversed(messages[2:]):
+        for msg in reversed(messages):
             if hasattr(msg, "content") and isinstance(msg.content, str) and "```json" in msg.content:
                 content = msg.content
                 break
-        if not content and len(messages) > 2:
-            last_ai = next((m for m in reversed(messages[2:]) if getattr(m, "type", "ai") == "ai" and getattr(m, "content", "")), None)
-            content = last_ai.content if last_ai else ""
+        if not content:
+            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
             
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
@@ -223,20 +169,6 @@ def review_code_node(state: ReviewerState) -> dict:
         print(f"[Reviewer Agent] JSON parsing failed: {e}. Defaulting to approval.")
         parsed_response = ReviewResponse(feedback="Automated review passed with default approval.", is_approved=True)
     
-    try:
-        from agents.src.shared.tools import get_output_dir
-        docs_dir = get_output_dir() / "docs"
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        (docs_dir / "08_code_review_report.md").write_text(
-            f"# Principal Engineer Code Review Report\n\n"
-            f"- **Approved:** `{parsed_response.is_approved}`\n\n"
-            f"## Complexity Analysis\n```\n{state.complexity_report}\n```\n\n"
-            f"## Review Feedback\n{parsed_response.feedback}\n",
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
     return {
         "code_review_comments": parsed_response.feedback,
         "code_review_approved": parsed_response.is_approved
