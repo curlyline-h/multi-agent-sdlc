@@ -1,27 +1,72 @@
 import asyncio
-import uuid
+import json as _json
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from backend.database import AsyncSessionLocal
-from backend.models import Project, Task, Workflow, AgentLogModel, HumanApproval, CommandExecution, FileRecord
+from backend.models import Project, Task, Workflow, AgentLogModel, HumanApproval, FileRecord
 from backend.websocket_manager import ws_manager
 from backend.git_service import GitService
 
 # Eagerly import heavy dependencies to prevent blocking the event loop on first request
 from agents.src.orchestrator.graph import parent_workflow
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.types import Command
 
 logger = logging.getLogger("orchestrator_service")
 
-_active_pipelines = set()
+_active_pipelines: set[str] = set()
+_active_tasks: dict[str, asyncio.Task] = {}
+_stop_requested: set[str] = set()
 
 class OrchestratorService:
+    @staticmethod
+    async def stop_pipeline_task(project_id: int, db: AsyncSession) -> bool:
+        """Stops a running pipeline for project_id, cancels its asyncio task, and marks it STOPPED."""
+        pid_key = str(project_id)
+        _stop_requested.add(pid_key)
+
+        task = _active_tasks.get(pid_key)
+        cancelled = False
+        if task and not task.done():
+            task.cancel()
+            cancelled = True
+
+        stmt = select(Workflow).where(Workflow.project_id == project_id)
+        wf: Any = (await db.execute(stmt)).scalars().first()
+        if wf and wf.status in ("RUNNING", "AWAITING_APPROVAL", "PAUSED"):
+            wf.status = "STOPPED"
+        proj: Any = await db.get(Project, project_id)
+        if proj and proj.current_status not in ("COMPLETED",):
+            proj.current_status = "STOPPED"
+        await db.commit()
+
+        await ws_manager.broadcast(pid_key, "STAGE_CHANGED", {
+            "stage": "STOPPED",
+            "active_role": "orchestrator",
+            "state": "STOPPED",
+        })
+        await ws_manager.broadcast(pid_key, "LOG_EMITTED", {
+            "agent_name": "orchestrator",
+            "message": "🛑 Session stopped by user.",
+            "timestamp": str(datetime.utcnow()),
+        })
+        return cancelled
+
+    @staticmethod
+    async def recover_stale_workflows():
+        """Marks any workflows left in RUNNING after an unclean shutdown as PAUSED."""
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                update(Workflow)
+                .where(Workflow.status == "RUNNING")
+                .values(status="PAUSED")
+            )
+            await db.commit()
+
     @staticmethod
     async def run_pipeline_task(project_id: int, thread_id: str, user_req: str, resume_feedback: Optional[str] = None):
         """Asynchronously runs or resumes the LangGraph orchestration graph stream and syncs with DB & WebSockets."""
@@ -32,6 +77,11 @@ class OrchestratorService:
             return
             
         _active_pipelines.add(thread_id)
+        pid_key = str(project_id)
+        _stop_requested.discard(pid_key)
+        cur_task = asyncio.current_task()
+        if cur_task is not None:
+            _active_tasks[pid_key] = cur_task
         
         try:
             from backend.telemetry import set_active_project_id
@@ -41,14 +91,37 @@ class OrchestratorService:
                 try:
                     # Use eagerly loaded graph & checkpointer
 
-                    async with AsyncSqliteSaver.from_conn_string("checkpoints.sqlite") as checkpointer:
-                        await checkpointer.setup()
+                    from agents.src.shared.checkpointer import get_async_checkpointer
+                    async with get_async_checkpointer("checkpoints.sqlite") as checkpointer:
                         orchestration_graph = parent_workflow.compile(checkpointer=checkpointer)
 
-                        config = {"configurable": {"thread_id": thread_id}}
+                        config: Any = {"configurable": {"thread_id": thread_id}}
 
                         graph_state = await orchestration_graph.aget_state(config)
 
+                        # Resolve & activate isolated per-project directory under projects/<slug>/
+                        proj_stmt = select(Project).where(Project.id == project_id)
+                        proj_res = await db.execute(proj_stmt)
+                        proj_row: Any = proj_res.scalars().first()
+                        raw_name = (getattr(proj_row, "title", None) or "").strip() if proj_row else ""
+                        proj_label = user_req if (not raw_name or raw_name.lower().startswith("sdlc project")) else raw_name
+
+                        from agents.src.shared.workspace import set_active_project_dir
+                        is_resuming = (resume_feedback is not None) or bool(graph_state.next)
+                        existing_path = (getattr(proj_row, "path", None) or "").strip() if proj_row else ""
+                        if is_resuming and existing_path:
+                            active_project_dir = set_active_project_dir(project_dir=existing_path)
+                        else:
+                            active_project_dir = set_active_project_dir(
+                                proj_label,
+                                unique_if_exists=not is_resuming,
+                            )
+                            if proj_row and not existing_path:
+                                proj_row.path = str(active_project_dir)
+                                await db.commit()
+                        logger.info(f"Active project workspace: {active_project_dir}")
+
+                        current_input: Any
                         if resume_feedback is not None:
                             current_input = Command(resume=resume_feedback)
                             logger.info(f"Resuming pipeline thread {thread_id} with feedback")
@@ -58,7 +131,7 @@ class OrchestratorService:
                                 HumanApproval.status == "PENDING"
                             )
                             res = await db.execute(stmt)
-                            pending_app = res.scalars().first()
+                            pending_app: Any = res.scalars().first()
                             if pending_app:
                                 pending_app.status = "APPROVED" if not resume_feedback else "FEEDBACK_SUBMITTED"
                                 pending_app.feed_back = resume_feedback
@@ -76,7 +149,7 @@ class OrchestratorService:
                                 "created_at": datetime.utcnow(),
                                 "updated_at": datetime.utcnow(),
                                 "prd": "",
-                                "project_name": "",
+                                "project_name": active_project_dir.name,
                                 "final_design_doc": "",
                                 "final_file_changes": [],
                                 "agent_logs": [],
@@ -90,7 +163,7 @@ class OrchestratorService:
                         # Update workflow status to RUNNING in DB
                         stmt = select(Workflow).where(Workflow.project_id == project_id)
                         res = await db.execute(stmt)
-                        wf = res.scalars().first()
+                        wf: Any = res.scalars().first()
                         if not wf:
                             wf = Workflow(
                                 project_id=project_id,
@@ -110,6 +183,9 @@ class OrchestratorService:
 
                         # Stream orchestration graph
                         async for event in orchestration_graph.astream(current_input, config=config):
+                            if pid_key in _stop_requested:
+                                logger.info(f"Stop requested for project {project_id}; halting stream.")
+                                raise asyncio.CancelledError()
                             for node_name, state_update in event.items():
                                 await OrchestratorService._process_node_event(db, project_id, thread_id, node_name, state_update, wf)
 
@@ -134,19 +210,23 @@ class OrchestratorService:
                             req_details = (interrupt_payload.get("section") or interrupt_payload.get("type") or interrupt_payload.get("message")) if isinstance(interrupt_payload, dict) else "Approval Required"
                             req_details = req_details or "Approval Required"
 
-                            import json as _json
                             if isinstance(interrupt_payload, dict) and "questions" in interrupt_payload:
                                 pay_load = _json.dumps(interrupt_payload["questions"])
                             else:
-                                pay_load = (interrupt_payload.get("draft") or interrupt_payload.get("content") or interrupt_payload.get("message")) if isinstance(interrupt_payload, dict) else str(interrupt_payload)
-                                pay_load = pay_load or "Approval Details"
+                                raw_payload = (interrupt_payload.get("draft") or interrupt_payload.get("content") or interrupt_payload.get("message")) if isinstance(interrupt_payload, dict) else str(interrupt_payload)
+                                if not raw_payload:
+                                    pay_load = "Approval Details"
+                                elif isinstance(raw_payload, str):
+                                    pay_load = raw_payload
+                                else:
+                                    pay_load = _json.dumps(raw_payload, default=str)
 
                             # Save human approval entry
                             app_entry = HumanApproval(
                                 workflow_id=wf.id,
                                 requesting_agent_id="orchestrator",
                                 status="PENDING",
-                                request_details=req_details,
+                                request_details=str(req_details),
                                 payload=pay_load,
                                 feed_back=""
                             )
@@ -162,10 +242,45 @@ class OrchestratorService:
                                 "content": app_entry.payload
                             })
 
+                            # Also emit readable prompt/questions into the chat stream & save .md draft for review
+                            questions_list = interrupt_payload.get("questions", []) if isinstance(interrupt_payload, dict) else []
+                            if questions_list:
+                                q_text = "\n".join(str(q) for q in questions_list)
+                                chat_msg = f"❓ **Clarification Needed:**\n{q_text}"
+                            else:
+                                import re as _re
+                                from agents.src.shared.workspace import get_artifact_path
+                                safe_sec = _re.sub(r"[^a-z0-9_-]", "_", str(app_entry.request_details).lower()).strip("_") or "review"
+                                draft_filename = f"{safe_sec}_draft.md"
+                                try:
+                                    draft_path = get_artifact_path(draft_filename)
+                                    draft_path.write_text(pay_load, encoding="utf-8")
+                                    await ws_manager.broadcast(str(project_id), "FILE_CHANGE", {
+                                        "path": draft_filename,
+                                        "action": "CREATED",
+                                        "diff": "",
+                                    })
+                                except Exception as draft_err:
+                                    logger.warning(f"Could not save draft markdown {draft_filename}: {draft_err}")
+                                preview = pay_load
+                                if len(preview) > 12000:
+                                    cut = preview.rfind("\n", 0, 12000)
+                                    preview = preview[: cut if cut > 0 else 12000] + f"\n\n... *(truncated — see full `{draft_filename}` in Explorer/Documents)*"
+                                chat_msg = (
+                                    f"✋ **Approval Required ({app_entry.request_details}):** "
+                                    f"Saved `{draft_filename}` in your project folder (check Explorer/Documents tab).\n\n"
+                                    f"{preview}"
+                                )
+                            await ws_manager.broadcast(str(project_id), "LOG_EMITTED", {
+                                "agent_name": "orchestrator",
+                                "message": chat_msg,
+                                "timestamp": str(datetime.utcnow())
+                            })
+
                         elif not graph_state.next and not has_interrupts:
                             wf.status = "COMPLETED"
                             wf.current_state = "COMPLETED"
-                            proj = await db.get(Project, project_id)
+                            proj: Any = await db.get(Project, project_id)
                             if proj:
                                 proj.current_status = "COMPLETED"
                             await db.commit()
@@ -175,23 +290,35 @@ class OrchestratorService:
                                 "state": "COMPLETED"
                             })
 
+                except asyncio.CancelledError:
+                    logger.info(f"Pipeline cancelled/stopped for project {project_id}")
+                    await db.rollback()
+                    stmt = select(Workflow).where(Workflow.project_id == project_id)
+                    wf_stop: Any = (await db.execute(stmt)).scalars().first()
+                    if wf_stop:
+                        wf_stop.status = "STOPPED"
+                    proj_stop: Any = await db.get(Project, project_id)
+                    if proj_stop and proj_stop.current_status != "COMPLETED":
+                        proj_stop.current_status = "STOPPED"
+                    await db.commit()
                 except Exception as e:
                     logger.error(f"Error executing orchestrator pipeline for project {project_id}: {e}", exc_info=True)
+                    await db.rollback()
                     stmt = select(Workflow).where(Workflow.project_id == project_id)
                     res = await db.execute(stmt)
-                    wf = res.scalars().first()
-                    if wf:
-                        wf.status = "FAILED"
+                    wf_err: Any = res.scalars().first()
+                    if wf_err:
+                        wf_err.status = "FAILED"
                         await db.commit()
                     await ws_manager.broadcast(str(project_id), "ERROR", {"message": str(e)})
         finally:
-            _active_pipelines.remove(thread_id)
+            _active_pipelines.discard(thread_id)
+            _active_tasks.pop(str(project_id), None)
+            _stop_requested.discard(str(project_id))
 
     @staticmethod
-    async def _process_node_event(db: AsyncSession, project_id: int, thread_id: str, node_name: str, state_update: Any, wf: Workflow):
+    async def _process_node_event(db: AsyncSession, project_id: int, thread_id: str, node_name: str, state_update: Any, wf: Any):
         """Processes a single node event from LangGraph, updating DB and sending WS broadcasts."""
-        import json as _json
-
         # Track completed nodes for graph state restoration on refresh
         completed = _json.loads(wf.completed_nodes or "[]")
 
