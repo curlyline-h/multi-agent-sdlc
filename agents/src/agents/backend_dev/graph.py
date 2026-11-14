@@ -38,7 +38,7 @@ def _is_queue_empty(state: BackendDevState) -> str:
 # ---------------------------------------------------------------------------
 def _did_linter_pass(state: BackendDevState) -> str:
     """If there are linter errors, loop back to write_code."""
-    max_iterations = 3
+    max_iterations = 2
     if state.linter_errors and state.iteration_count < max_iterations:
         return "write_code"
     return "run_tests"
@@ -48,7 +48,7 @@ def _did_linter_pass(state: BackendDevState) -> str:
 # ---------------------------------------------------------------------------
 def _did_tests_pass(state: BackendDevState) -> str:
     """If there are test failures, loop back to write_code."""
-    max_iterations = 3
+    max_iterations = 2
     if state.test_failures and state.iteration_count < max_iterations:
         return "write_code"
     return "mark_task_complete"
@@ -105,11 +105,7 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("mark_task_complete", "pop_task")
 
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
-
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 backend_dev_subgraph = workflow.compile(checkpointer=checkpointer)
 
