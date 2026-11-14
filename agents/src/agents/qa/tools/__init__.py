@@ -9,9 +9,9 @@ import os
 import requests
 import subprocess
 from pathlib import Path
-from agents.src.shared.tools import run_terminal_command, get_output_dir
+from agents.src.shared.tools import run_terminal_command
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 @tool
 def api_integration_tester(endpoint: str, method: str, payload: dict = None) -> str:
@@ -38,47 +38,54 @@ def api_integration_tester(endpoint: str, method: str, payload: dict = None) -> 
 @tool
 def run_test_suite() -> str:
     """
-    Executes the automated test suite or static test verification in the output directory.
+    Executes the project's automated test suite, choosing the command from the detected stack
+    (Maven/Gradle for Java, pytest for Python, npm/Playwright for web projects).
+    Never opens a headed browser and never blocks on interactive prompts.
     """
+    import json
+    from agents.src.shared.proc import run_command_safe
+
     output_dir = get_output_dir()
-    
-    # In headless CI/WSL environments without a live browser server on port 3000,
-    # run unit tests if configured, or verify test script syntax and test assertions.
-    if (output_dir / "pytest.ini").exists() or list(output_dir.rglob("test_*.py")):
-        cmd = "pytest -q"
-    elif (output_dir / "package.json").exists():
-        import json as _json
+
+    pkg = output_dir / "package.json"
+    pkg_deps: dict = {}
+    pkg_scripts: dict = {}
+    if pkg.exists():
         try:
-            pkg = _json.loads((output_dir / "package.json").read_text(encoding="utf-8"))
-            scripts = pkg.get("scripts", {})
+            pkg_json = json.loads(pkg.read_text(encoding="utf-8"))
+            pkg_deps = {**pkg_json.get("dependencies", {}), **pkg_json.get("devDependencies", {})}
+            pkg_scripts = pkg_json.get("scripts", {}) or {}
         except Exception:
-            scripts = {}
-        if "test" in scripts and "no test specified" not in scripts["test"] and "playwright" not in scripts["test"]:
-            cmd = "npm test -- --watchAll=false --passWithNoTests"
-        else:
-            # Verify generated test file exists and has valid test blocks
-            spec_file = output_dir / "tests" / "e2e.spec.ts"
-            if spec_file.exists() and spec_file.stat().st_size > 50:
-                return f"TEST_EXECUTION_COMPLETE: Tests passed. Verified {spec_file.stat().st_size} bytes in tests/e2e.spec.ts."
-            return "TEST_EXECUTION_COMPLETE: Tests passed."
+            pass
+
+    has_playwright_cfg = (output_dir / "playwright.config.ts").exists() or (output_dir / "playwright.config.js").exists()
+
+    if (output_dir / "pom.xml").exists():
+        cmd = "mvn -q -B test"
+        timeout = 300
+    elif (output_dir / "build.gradle").exists() or (output_dir / "build.gradle.kts").exists():
+        cmd = "gradlew.bat test" if (os.name == "nt" and (output_dir / "gradlew.bat").exists()) else "gradle test"
+        timeout = 300
+    elif has_playwright_cfg and "@playwright/test" in pkg_deps:
+        cmd = "npx --no-install playwright test --workers=1"
+        timeout = 180
+    elif pkg.exists() and pkg_scripts.get("test"):
+        cmd = "npm test --silent"
+        timeout = 180
+    elif (output_dir / "pytest.ini").exists() or (output_dir / "tests").exists() and list(output_dir.rglob("test_*.py")):
+        cmd = "pytest -q"
+        timeout = 180
     else:
-        spec_file = output_dir / "tests" / "e2e.spec.ts"
-        if spec_file.exists() and spec_file.stat().st_size > 50:
-            return f"TEST_EXECUTION_COMPLETE: Tests passed. Verified {spec_file.stat().st_size} bytes in tests/e2e.spec.ts."
         return "TEST_FAILED: No test suite configuration found in the output directory."
-        
+
     try:
-        res = subprocess.run(
-            cmd, shell=True, cwd=str(output_dir),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
-        )
-        if res.returncode == 0:
-            return f"TEST_EXECUTION_COMPLETE: Tests passed.\n{res.stdout[-1000:]}"
-        else:
-            errors = res.stdout + res.stderr
-            return f"TEST_EXECUTION_FAILED:\n{errors[-2000:]}"
-    except subprocess.TimeoutExpired:
-        return "TEST_EXECUTION_FAILED: Timeout expired."
+        returncode, stdout, stderr, timed_out = run_command_safe(cmd, output_dir, timeout=timeout)
+        if timed_out:
+            return f"TEST_EXECUTION_FAILED: '{cmd}' timed out after {timeout}s and was terminated."
+        if returncode == 0:
+            return f"TEST_EXECUTION_COMPLETE: Tests passed.\n{stdout[-1000:]}"
+        errors = stdout + stderr
+        return f"TEST_EXECUTION_FAILED ({cmd}):\n{errors[-2000:]}"
     except Exception as e:
         return f"TEST_EXECUTION_FAILED: {e}"
 
