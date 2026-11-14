@@ -1,73 +1,107 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
-export async function getLatestProject() {
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
+  }
+  return res.json();
+}
+
+export async function getLatestProject(): Promise<{ id: number; name: string; description: string } | null> {
   try {
-    const res = await fetch(`${API_BASE}/projects/latest`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (err) {
-    console.warn('Could not fetch latest project:', err);
+    return await apiFetch('/projects/latest');
+  } catch {
     return null;
   }
 }
 
-export async function createProject(name: string, prompt: string) {
-  const res = await fetch(`${API_BASE}/projects`, {
+export async function createProject(name: string, user_req: string) {
+  const data = await apiFetch<{ id: number; name: string; description: string }>('/projects', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, user_req: prompt }),
+    body: JSON.stringify({ name, user_req }),
   });
-  if (!res.ok) {
-    const errorDetail = await res.text();
-    throw new Error(`Failed to create project (${res.status}): ${errorDetail}`);
-  }
-  const data = await res.json();
   if (typeof window !== 'undefined' && data?.id) {
     localStorage.setItem('activeProjectId', String(data.id));
   }
   return data;
 }
 
-export async function resumeProject(projectId: string | number, feedback?: string) {
-  const res = await fetch(`${API_BASE}/projects/${projectId}/resume`, {
+export async function resumeProject(projectId: string) {
+  return apiFetch(`/projects/${projectId}/resume`, { method: 'POST' });
+}
+
+export async function stopProject(projectId: string) {
+  return apiFetch<{ status: string; project_id: number; task_cancelled: boolean }>(`/projects/${projectId}/stop`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feedback: feedback || '' }),
   });
-  if (!res.ok) {
-    const errorDetail = await res.text();
-    throw new Error(`Resume error (${res.status}): ${errorDetail}`);
-  }
-  return await res.json();
 }
 
-export async function getProjectApprovals(projectId: string | number) {
-  const res = await fetch(`${API_BASE}/approvals/project/${projectId}`);
-  if (!res.ok) return [];
-  return await res.json();
+export async function getProjectApprovals(projectId: string) {
+  return apiFetch<any[]>(`/approvals/project/${projectId}`);
 }
 
-export async function respondToApproval(approvalId: string | number, feedback: string) {
-  const res = await fetch(`${API_BASE}/approvals/${approvalId}/respond`, {
+export async function respondToApproval(approvalId: string, feedback: string = '') {
+  return apiFetch(`/approvals/${approvalId}/respond`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      approved: true,
-      feedback: feedback || '',
+      status: feedback.trim() ? 'FEEDBACK_SUBMITTED' : 'APPROVED',
+      feed_back: feedback,
     }),
   });
-  if (!res.ok) {
-    throw new Error(`Failed to submit approval: ${res.statusText}`);
-  }
-  return await res.json();
 }
 
-export async function getFileContent(filePath: string) {
-  const activeProjectId = typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : null;
-  const url = activeProjectId
-    ? `${API_BASE}/files/content?project_id=${activeProjectId}&path=${encodeURIComponent(filePath)}`
-    : `${API_BASE}/files/content?path=${encodeURIComponent(filePath)}`;
-  const res = await fetch(url);
-  if (!res.ok) return { content: '' };
-  return await res.json();
+export async function getFileContent(path: string, projectId?: string): Promise<{ path: string; content: string }> {
+  const pid = projectId || (typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') || '' : '');
+  const q = pid && pid !== 'live-sdlc-project' && pid !== 'new-project' ? `&project_id=${encodeURIComponent(pid)}` : '';
+  return apiFetch(`/files/content?path=${encodeURIComponent(path)}${q}`);
+}
+
+export async function getFileTree(projectId?: string) {
+  const pid = projectId || (typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') || '' : '');
+  const q = pid && pid !== 'live-sdlc-project' && pid !== 'new-project' ? `?project_id=${encodeURIComponent(pid)}` : '';
+  return apiFetch<any[]>(`/files/tree${q}`);
+}
+
+export async function getProjectWorkflow(projectId: string) {
+  return apiFetch<any>(`/workflows/project/${projectId}`);
+}
+
+export async function listProjects(): Promise<Array<{ id: number; title?: string; name?: string; description?: string; current_status?: string }>> {
+  try {
+    return await apiFetch('/projects');
+  } catch {
+    return [];
+  }
+}
+
+export async function getProject(projectId: string): Promise<{ id: number; title?: string; description?: string; current_status?: string } | null> {
+  try {
+    return await apiFetch(`/projects/${projectId}`);
+  } catch {
+    return null;
+  }
+}
+
+export async function getProjectLogs(projectId: string): Promise<any[]> {
+  try {
+    return await apiFetch(`/logs/project/${projectId}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function getProjectTerminalLogs(projectId: string): Promise<any[]> {
+  try {
+    return await apiFetch(`/terminal/project/${projectId}`);
+  } catch {
+    return [];
+  }
 }
