@@ -14,7 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from agents.src.shared.llm import get_llm, llm_invoke_with_retry
+from agents.src.shared.llm import get_llm, llm_invoke_with_retry, needs_external_research
 from langchain_core.prompts import PromptTemplate
 from langgraph.types import interrupt
 
@@ -26,11 +26,12 @@ from agents.src.shared.tools import rag_search
 # LLM setup  (swap model / provider to your preference)
 # ---------------------------------------------------------------------------
 
-_llm_draft = get_llm(temperature=0.2, max_tokens=2500)
+_llm_draft = get_llm(temperature=0.7, max_tokens=4000, tier="heavy")
 
 _llm_critique = get_llm(
-    temperature=0.2,
-    max_tokens=2000
+    temperature=0.4,
+    max_tokens=1500,
+    tier="fast",
 )
 
 # ---------------------------------------------------------------------------
@@ -53,16 +54,7 @@ def research_node(state: PlanningState) -> dict:
     Decides whether to perform RAG/web search based on the user request.
     If the request is a simple "create a new project from scratch", skips search to save time.
     """
-    decision_prompt = PromptTemplate.from_template(
-        "Does this user request require researching an existing internal codebase or finding external web documentation? "
-        "Reply with ONLY 'YES' or 'NO'.\n\nRequest: {req}"
-    )
-    decision = llm_invoke_with_retry(_llm_critique, decision_prompt.format(req=state.user_req)).content.strip().upper()
-    
-    # Strip out any <think> blocks
-    decision = re.sub(r'<think>.*?</think>', '', decision, flags=re.DOTALL).strip()
-    
-    if "YES" not in decision:
+    if not needs_external_research(state.user_req):
         return {
             "web_search_results": ["Skipped web search for new generic project."],
             "rag_results": ["Skipped internal RAG search for new generic project."],
@@ -74,11 +66,11 @@ def research_node(state: PlanningState) -> dict:
 
     # --- DuckDuckGo web search ---
     from agents.src.shared.llm import safe_web_search
-    web_results = safe_web_search(state.user_req)
-    web_results_list = [web_results] if isinstance(web_results, str) else list(web_results)
+    web_res = safe_web_search(state.user_req)
+    web_results = [web_res] if isinstance(web_res, str) else list(web_res or [])
 
     return {
-        "web_search_results": web_results_list,
+        "web_search_results": web_results,
         "rag_results": rag_results,
     }
 
@@ -95,17 +87,23 @@ def clarification_node(state: PlanningState) -> dict:
     an interrupt so the UI can present questions to the user.
     """
     prompt_path = _PROMPTS_DIR / "planning_qa.txt"
+    # Never loop endlessly once the user has already answered a round of questions
+    if state.user_clarification_answers and "User answered:" in state.user_clarification_answers:
+        return {"clarifying_questions": []}
+
     clarify_prompt = PromptTemplate.from_template(prompt_path.read_text(encoding="utf-8"))
     response = llm_invoke_with_retry(_llm_critique, clarify_prompt.format(
         user_req=state.user_req,
         qa_history=state.user_clarification_answers or "None"
-    ))
-    content = response.content.strip()
+    ), label="Planning-Clarify")
+    from agents.src.shared.llm import extract_text_content
+    content = extract_text_content(response).strip()
 
     # Strip out any <think>...</think> blocks from Qwen before checking for CLEAR
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+    clear_token = re.sub(r'[^A-Z]', '', clean_content.upper())
 
-    if "CLEAR" in clean_content.upper() or (state.user_clarification_answers and len(state.user_clarification_answers) > 20):
+    if clear_token == "CLEAR" or clean_content.upper().startswith("CLEAR"):
         return {"clarifying_questions": []}
 
     # Pass the entire conversational response back to the user
@@ -145,15 +143,15 @@ def generate_draft_node(state: PlanningState) -> dict:
 
     formatted = prompt.format(
         user_req=state.user_req,
-        web_search_results="\n\n".join(state.web_search_results) or "No web search results available.",
-        rag_results="\n\n".join(state.rag_results) or "No internal knowledge base results found.",
-        user_clarification_answers=state.user_clarification_answers or "No clarifications provided.",
-        critique_notes=state.critique_notes or "No previous critique.",
-        previous_draft=(state.plan_draft or "No previous draft.")[:6000],
-        user_feedback=state.user_feedback or "No previous feedback.",
+        web_search_results=("\n\n".join(state.web_search_results) or "No web search results available.")[:1500],
+        rag_results=("\n\n".join(state.rag_results) or "No internal knowledge base results found.")[:1500],
+        user_clarification_answers=(state.user_clarification_answers or "No clarifications provided.")[:1500],
+        critique_notes=(state.critique_notes or "No previous critique.")[:1500],
+        previous_draft=(state.plan_draft or "No previous draft.")[:2500],
+        user_feedback=(state.user_feedback or "No previous feedback.")[:1000],
     )
 
-    response = llm_invoke_with_retry(_llm_draft, formatted)
+    response = llm_invoke_with_retry(_llm_draft, formatted, label="Planning-Draft")
     content = response.content
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     return {
@@ -176,9 +174,11 @@ def critique_node(state: PlanningState) -> dict:
 
     response = llm_invoke_with_retry(
         _llm_critique,
-        prompt.format(user_req=state.user_req, plan_draft=state.plan_draft)
+        prompt.format(user_req=state.user_req, plan_draft=state.plan_draft),
+        label="Planning-Critique",
     )
-    critique = response.content.strip()
+    from agents.src.shared.llm import extract_text_content
+    critique = extract_text_content(response).strip()
     return {"critique_notes": critique}
 
 
@@ -202,8 +202,9 @@ def user_approval_node(state: PlanningState) -> dict:
         ),
     })
 
-    # If the user approves (empty response or explicit "approve"), mark as approved
-    if not user_response or str(user_response).strip().lower() in ("approve", "yes", "ok", ""):
+    # If the user approves (empty response or common approval phrases), mark as approved
+    resp_norm = str(user_response or "").strip().lower()
+    if not resp_norm or resp_norm in ("approve", "approved", "yes", "ok", "lgtm", "proceed", "looks good", "go ahead", "haan"):
         return {"user_feedback": "", "is_approved": True}
 
     # Otherwise capture the feedback for the next revision loop
@@ -222,17 +223,9 @@ def finalize_node(state: PlanningState) -> dict:
     """
     structured = parse_structured_output.invoke({"raw_output": state.plan_draft})
 
-    # Write the human-readable draft to workspace root and scenario output/docs/
-    root_dir = Path(__file__).resolve().parents[4]
-    output_file = root_dir / "final_plan.md"
+    # Write the human-readable draft to a markdown file
+    output_file = Path(__file__).resolve().parents[4] / "final_plan.md"
     output_file.write_text(state.plan_draft, encoding="utf-8")
-    try:
-        from agents.src.shared.tools import get_output_dir
-        docs_dir = get_output_dir() / "docs"
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        (docs_dir / "01_feasibility_plan.md").write_text(state.plan_draft, encoding="utf-8")
-    except Exception as e:
-        print(f"Failed to write 01_feasibility_plan.md: {e}")
 
     return {
         "final_plan": state.plan_draft,

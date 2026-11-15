@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Dict, Any, Optional, Union
 
 
 class PlanningState(BaseModel):
@@ -7,14 +7,32 @@ class PlanningState(BaseModel):
     user_req: str = Field(description="Raw user requirement")
 
     # ── Research & iteration internals ────────────────────────────────────────
-    web_search_results: List[str] = Field(
+    web_search_results: Union[List[str], str] = Field(
         default_factory=list,
         description="Accumulated web search results used for context"
     )
-    rag_results: List[str] = Field(
+    rag_results: Union[List[str], str] = Field(
         default_factory=list,
         description="Relevant chunks retrieved from the internal knowledge base"
     )
+
+    @field_validator("web_search_results", mode="before")
+    @classmethod
+    def coerce_web_search_results(cls, v):
+        if isinstance(v, str):
+            return [v] if v else []
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return []
+
+    @field_validator("rag_results", mode="before")
+    @classmethod
+    def coerce_rag_results(cls, v):
+        if isinstance(v, str):
+            return [v] if v else []
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return []
     clarifying_questions: List[str] = Field(
         default_factory=list,
         description="Questions the Planner wants to ask the user before drafting"
