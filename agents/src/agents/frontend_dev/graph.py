@@ -39,19 +39,19 @@ def _is_queue_empty(state: FrontendDevState) -> str:
     return "push_to_github" if state.current_task is None else "write_ui_code"
 
 def _did_linter_pass(state: FrontendDevState) -> str:
-    max_iterations = 3
+    max_iterations = 2
     if state.linter_errors and state.iteration_count < max_iterations:
         return "write_ui_code"
     return "run_tests"
 
 def _did_tests_pass(state: FrontendDevState) -> str:
-    max_iterations = 3
+    max_iterations = 2
     if state.test_failures and state.iteration_count < max_iterations:
         return "write_ui_code"
     return "browser_check"
 
 def _is_console_clean(state: FrontendDevState) -> str:
-    max_iterations = 3
+    max_iterations = 2
     if state.browser_console_errors and state.iteration_count < max_iterations:
         return "write_ui_code"
     return "mark_task_complete"
@@ -106,11 +106,9 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("mark_task_complete", "pop_task")
 
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 frontend_dev_subgraph = workflow.compile(checkpointer=checkpointer)
 

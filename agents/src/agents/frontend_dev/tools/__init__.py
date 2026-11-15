@@ -9,9 +9,9 @@ from agents.src.shared.tools import tool
 import subprocess
 import glob
 import re
-from agents.src.shared.tools import run_terminal_command, get_output_dir
+from agents.src.shared.tools import run_terminal_command
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 @tool
 def api_schema_fetcher() -> str:
@@ -126,10 +126,10 @@ def frontend_linter(file_path: str) -> str:
         )
         try:
             stdout, stderr = proc.communicate(timeout=30)
-            errors = (stdout or stderr or "")
-            if proc.returncode == 0 or proc.returncode == 127 or "not found" in errors.lower() or "not the tsc command" in errors.lower():
+            if proc.returncode == 0:
                 return "LINT_PASSED"
             else:
+                errors = (stdout or stderr or "")
                 return f"LINT_FAILED:\n{errors[-2000:]}"
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -170,10 +170,10 @@ def run_component_tests(test_file_path: str) -> str:
             cmd, shell=True, cwd=str(output_dir),
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
         )
-        errors = (result.stdout or "") + (result.stderr or "")
-        if result.returncode == 0 or result.returncode == 127 or "not found" in errors.lower():
+        if result.returncode == 0:
             return "TESTS_PASSED"
         else:
+            errors = result.stdout or result.stderr
             return f"TESTS_FAILED:\n{errors[-2000:]}"
     except subprocess.TimeoutExpired:
         return "TESTS_PASSED"
