@@ -151,11 +151,7 @@ workflow.add_conditional_edges(
 )
 workflow.add_edge("finalize_design", END)
 
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
-
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 architect_subgraph = workflow.compile(checkpointer=checkpointer)
 
@@ -165,7 +161,8 @@ if __name__ == "__main__":
 
     print("Starting Architect Agent...")
     
-    prd_path = os.path.join(os.path.dirname(__file__), "../../../../final_prd.md")
+    from agents.src.shared.workspace import get_artifact_path
+    prd_path = str(get_artifact_path("final_prd.md"))
     try:
         with open(prd_path, "r", encoding="utf-8") as f:
             prd_content = f.read()
@@ -193,7 +190,7 @@ if __name__ == "__main__":
             # Save the final design to final_design.md
             final_design = state.values.get("final_design_doc", "No design generated.")
             try:
-                design_path = os.path.join(os.path.dirname(__file__), "../../../../final_design.md")
+                design_path = str(get_artifact_path("final_design.md"))
                 with open(design_path, "w", encoding="utf-8") as f:
                     f.write(final_design)
                 print(f"Final design document saved to final_design.md")
