@@ -10,12 +10,12 @@ import subprocess
 from pathlib import Path
 
 # Re-export generic terminal tool so nodes can import it from this package
-from agents.src.shared.tools import run_terminal_command, get_output_dir  # noqa: F401
+from agents.src.shared.tools import run_terminal_command  # noqa: F401
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 @tool
-def run_sast_scanner(path: str = "") -> str:
+def run_sast_scanner() -> str:
     """
     Runs a Static Application Security Testing (SAST) tool.
     Detects Python (bandit) or Node (basic grep for secrets as a fallback).
@@ -42,7 +42,7 @@ def run_sast_scanner(path: str = "") -> str:
             return f"SAST_SCAN_FAILED: {e}"
 
 @tool
-def check_dependencies(path: str = "") -> str:
+def check_dependencies() -> str:
     """
     Runs a Software Composition Analysis (SCA) tool (e.g., npm audit).
     """
