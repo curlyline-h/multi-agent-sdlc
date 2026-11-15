@@ -32,20 +32,14 @@ from agents.src.shared.tools import (
 # ---------------------------------------------------------------------------
 # LLM setup
 # ---------------------------------------------------------------------------
-from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry
+from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry, execute_tool_calls
 from pydantic import BaseModel, Field
 from typing import List
 import subprocess
 import os
 import requests
 
-class GeneratedFile(BaseModel):
-    path: str = Field(description="The relative path to save the file to, e.g. docker-compose.yml")
-    content: str = Field(description="The full raw code content of the file")
-
-class CodeGenerationResponse(BaseModel):
-    terminal_commands: List[str] = Field(default_factory=list, description="List of shell commands to execute")
-    files: List[GeneratedFile] = Field(description="List of files to generate or update")
+from agents.src.shared.schemas import GeneratedFile, CodeGenerationResponse
 
 # ---------------------------------------------------------------------------
 # LLM setup
@@ -55,47 +49,12 @@ _ROOT_DIR = Path(__file__).resolve().parents[4]
 
 _llm = get_llm(temperature=0.1, max_tokens=4000)
 
+from agents.src.shared.context import build_codebase_context
+
 def _get_codebase_summary() -> str:
-    from agents.src.shared.tools import get_output_dir
-    output_dir = get_output_dir()
-    if not output_dir.exists():
-        return "No generated code found yet."
-        
-    code_blocks = []
-    omitted_files = []
-    allowed_extensions = {".py", ".ts", ".tsx", ".js", ".jsx", ".sql", ".css", ".json", ".md", ".html", ".yml", ".yaml", ".toml"}
-    ignored_dirs = {"node_modules", ".git", ".next", "dist", "build"}
-    
-    MAX_TOTAL_CHARS = 10000
-    current_total_chars = 0
-    
-    for path in sorted(output_dir.rglob("*")):
-        if path.is_file():
-            if any(part in ignored_dirs for part in path.parts):
-                continue
-            if path.suffix in allowed_extensions:
-                rel_path = path.relative_to(_ROOT_DIR)
-                if current_total_chars >= MAX_TOTAL_CHARS:
-                    omitted_files.append(str(rel_path))
-                    continue
-                    
-                try:
-                    content = path.read_text(encoding="utf-8")
-                    if len(content) > 2500:
-                        content = content[:2500] + "\n... [TRUNCATED] ..."
-                    block = f"File: {rel_path}\n```\n{content}\n```"
-                    code_blocks.append(block)
-                    current_total_chars += len(block)
-                except Exception as e:
-                    code_blocks.append(f"File: {rel_path} (Error: {e})")
-                    
-    if not code_blocks and not omitted_files:
-        return "No files generated yet."
-        
-    res = "\n\n".join(code_blocks)
-    if omitted_files:
-        res += "\n\n### Omitted files due to context limits:\n" + "\n".join(f"- {f}" for f in omitted_files)
-    return res
+    return build_codebase_context(
+        preferred_keywords=("docker", "package.json", "requirements", "pyproject", "main", "index", "env"),
+    )
 
 # ---------------------------------------------------------------------------
 # 1. Generate Deployment Plan Node
@@ -127,8 +86,7 @@ def generate_deployment_plan_node(state: DevOpsState) -> dict:
     if os.name == 'nt':
         formatted += "\n\nOS RULE: The terminal is Windows cmd.exe. DO NOT use Linux commands like `mkdir -p`, `rm -rf`, or `touch`. Use Windows equivalents (e.g., `mkdir` without `-p` to create directories, `del /s /q` or `rmdir /s /q` for deletion). `mkdir` automatically creates intermediate directories in cmd."
         
-    from agents.src.shared.tools import write_file, get_output_dir, _clean_rel_path
-    tools_list = [write_file, run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, validate_iac_config, run_deployment, health_check_ping, push_github_actions]
+    tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, validate_iac_config, run_deployment, health_check_ping, push_github_actions]
     llm_with_tools = _llm.bind_tools(tools_list)
     
     messages = [
@@ -140,7 +98,7 @@ def generate_deployment_plan_node(state: DevOpsState) -> dict:
     turn_limit = 15
     for turn in range(turn_limit):
         try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="DevOps")
+            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="DevOps", tools=tools_list)
         except Exception as e:
             if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
                 import ast
@@ -175,34 +133,33 @@ def generate_deployment_plan_node(state: DevOpsState) -> dict:
             break
             
         tool_map = {tool.name: tool for tool in tools_list}
-        for tool_call in response.tool_calls:
-            name = tool_call["name"]
-            print(f"Agent calling tool: {name} with args {tool_call['args']}")
-            if name in tool_map:
-                result = tool_map[name].invoke(tool_call["args"])
-            else:
-                result = f"Error: Tool {name} not found."
-            messages.append(ToolMessage(content=str(result), tool_call_id=tool_call["id"]))
+        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="DevOps"))
 
     generated_dump = []
     deployment_cmds = []
     
     try:
-        # Find the content containing the JSON (only from assistant responses in messages[2:])
+        # Find the content containing the JSON
         content = ""
-        for msg in reversed(messages[2:]):
-            if hasattr(msg, "content") and isinstance(msg.content, str) and ("```json" in msg.content or "terminal_commands" in msg.content or '"files"' in msg.content):
+        for msg in reversed(messages):
+            if hasattr(msg, "content") and isinstance(msg.content, str) and ("```json" in msg.content or "terminal_commands" in msg.content):
                 content = msg.content
                 break
-        if not content and len(messages) > 2:
-            last_ai = next((m for m in reversed(messages[2:]) if getattr(m, "type", "ai") == "ai" and getattr(m, "content", "")), None)
-            content = last_ai.content if last_ai else ""
+        if not content:
+            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
             
-        from agents.src.shared.llm import extract_files_and_commands_robust
-        from agents.src.shared.tools import get_output_dir, _clean_rel_path
-        parsed = extract_files_and_commands_robust(content)
+        json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
+        if not json_match:
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            
+        if json_match:
+            parsed = json.loads(json_match.group(1) if '```' in content else json_match.group(0))
+        else:
+            parsed = json.loads(content)
+            
         parsed_response = CodeGenerationResponse(**parsed)
         
+        from agents.src.shared.workspace import get_output_dir
         output_dir = get_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
         
@@ -213,71 +170,11 @@ def generate_deployment_plan_node(state: DevOpsState) -> dict:
         
         # Files
         for f in parsed_response.files:
-            clean_path = _clean_rel_path(f.path)
-            file_path = output_dir / clean_path
+            file_path = output_dir / f.path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f.content, encoding="utf-8")
-            print(f"DevOps wrote: {clean_path}")
-            generated_dump.append(f"File: {clean_path}\n{f.content}")
-
-        # Ensure standard IaC artifacts (Dockerfile, docker-compose.yml, .github/workflows/ci.yml) exist
-        dockerfile_path = output_dir / "Dockerfile"
-        if not dockerfile_path.exists():
-            dockerfile_content = (
-                "FROM node:20-alpine\n"
-                "WORKDIR /app\n"
-                "COPY . .\n"
-                "EXPOSE 8080\n"
-                "CMD [\"sh\", \"-c\", \"echo 'Service container started' && sleep infinity\"]\n"
-            )
-            dockerfile_path.write_text(dockerfile_content, encoding="utf-8")
-            generated_dump.append(f"File: Dockerfile\n{dockerfile_content}")
-
-        compose_path = output_dir / "docker-compose.yml"
-        if not compose_path.exists():
-            compose_content = (
-                "version: '3.9'\n"
-                "services:\n"
-                "  app:\n"
-                "    build: .\n"
-                "    ports:\n"
-                "      - '8080:8080'\n"
-                "    environment:\n"
-                "      - DATABASE_URL=postgresql://postgres:postgres@db:5432/appdb\n"
-                "    depends_on:\n"
-                "      - db\n"
-                "  db:\n"
-                "    image: postgres:16-alpine\n"
-                "    environment:\n"
-                "      - POSTGRES_USER=postgres\n"
-                "      - POSTGRES_PASSWORD=postgres\n"
-                "      - POSTGRES_DB=appdb\n"
-                "    ports:\n"
-                "      - '5432:5432'\n"
-            )
-            compose_path.write_text(compose_content, encoding="utf-8")
-            generated_dump.append(f"File: docker-compose.yml\n{compose_content}")
-
-        ci_path = output_dir / ".github" / "workflows" / "ci.yml"
-        if not ci_path.exists():
-            ci_path.parent.mkdir(parents=True, exist_ok=True)
-            ci_content = (
-                "name: CI/CD Pipeline\n"
-                "on:\n"
-                "  push:\n"
-                "    branches: [ main, 'feature/**' ]\n"
-                "  pull_request:\n"
-                "    branches: [ main ]\n"
-                "jobs:\n"
-                "  build-and-test:\n"
-                "    runs-on: ubuntu-latest\n"
-                "    steps:\n"
-                "      - uses: actions/checkout@v4\n"
-                "      - name: Verify Workspace & Tests\n"
-                "        run: echo 'CI verification completed'\n"
-            )
-            ci_path.write_text(ci_content, encoding="utf-8")
-            generated_dump.append(f"File: .github/workflows/ci.yml\n{ci_content}")
+            print(f"DevOps wrote: output/{f.path}")
+            generated_dump.append(f"File: output/{f.path}\n{f.content}")
             
     except Exception as e:
         print(f"JSON parsing failed: {e}")
@@ -352,7 +249,7 @@ def execute_deployment_node(state: DevOpsState) -> dict:
     Executes the deployment against the physical environment (Docker/Cloud)
     by running the dynamic commands generated by the DevOps agent.
     """
-    from agents.src.shared.tools import get_output_dir
+    from agents.src.shared.workspace import get_output_dir
     output_dir = get_output_dir()
     logs = []
     
@@ -404,21 +301,6 @@ def verify_health_node(state: DevOpsState) -> dict:
     except Exception as e:
         status = f"HEALTH_CHECK_FAILED: {e}"
         
-    try:
-        from agents.src.shared.tools import get_output_dir
-        docs_dir = get_output_dir() / "docs"
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        (docs_dir / "10_devops_deployment_report.md").write_text(
-            f"# DevOps Infrastructure & Deployment Report\n\n"
-            f"- **IaC Validation:** `{state.iac_validation_notes}`\n"
-            f"- **Health Check Status:** `{status}`\n\n"
-            f"## Deployment Plan\n{state.deployment_plan}\n\n"
-            f"## Execution Logs\n```\n{state.deployment_logs}\n```\n",
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
-
     return {"health_check_status": status}
 
 # ---------------------------------------------------------------------------

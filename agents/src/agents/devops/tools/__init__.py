@@ -8,9 +8,9 @@ import subprocess
 import requests
 import time
 from pathlib import Path
-from agents.src.shared.tools import run_terminal_command, get_output_dir
+from agents.src.shared.tools import run_terminal_command
 
-_ROOT_DIR = Path(__file__).resolve().parents[5]
+from agents.src.shared.workspace import get_output_dir
 
 @tool
 def validate_iac_config(iac_code: str, config_type: str = "auto") -> str:
@@ -38,8 +38,7 @@ def validate_iac_config(iac_code: str, config_type: str = "auto") -> str:
             errors="replace",
             timeout=30
         )
-        err_lower = (res.stderr or "").lower()
-        if res.returncode == 0 or "docker desktop" in err_lower or "daemon" in err_lower or "not found" in err_lower or "cannot connect" in err_lower:
+        if res.returncode == 0:
             return "VALIDATION_PASSED: The configuration is syntactically correct."
         else:
             return f"VALIDATION_FAILED: {res.stderr[-2000:]}"
