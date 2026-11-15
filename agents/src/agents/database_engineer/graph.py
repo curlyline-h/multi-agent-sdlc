@@ -42,7 +42,7 @@ def _should_revise_migrations(state: DatabaseEngineerState) -> str:
     If validation failed or migrations crashed, and we haven't hit the limit,
     loop back to rewrite the migrations. Otherwise end.
     """
-    max_iterations = 1
+    max_iterations = 3
     if not state.db_schema_ready and state.iteration_count < max_iterations:
         return "write_migrations"
     return "push_to_github"
@@ -81,11 +81,9 @@ workflow.add_conditional_edges(
 workflow.add_edge("push_to_github", "mark_task_complete")
 workflow.add_edge("mark_task_complete", "pop_task")
 
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.memory import MemorySaver
 
-_db_conn = sqlite3.connect("checkpoints.sqlite", check_same_thread=False)
-checkpointer = SqliteSaver(_db_conn)
+checkpointer = MemorySaver()
 
 database_engineer_subgraph = workflow.compile(checkpointer=checkpointer)
 
