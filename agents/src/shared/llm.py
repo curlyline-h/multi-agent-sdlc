@@ -559,6 +559,7 @@ def llm_tool_invoke_with_retry(
     Gemini models -> Groq models -> Local Ollama.
     """
     from langchain_core.messages import AIMessage, HumanMessage
+    import json
     import re
 
     # Keep conversation bounded to prevent token explosion across 15 turns
@@ -648,13 +649,18 @@ def run_tool_loop_with_json_fallback(
     agent_name: str = "Agent",
     max_turns: int = 8,
     nudge_after_turn: int = 4,
+    nudge_message: Optional[str] = None,
+    final_fallback_prompt: Optional[str] = None,
+    stop_markers: tuple[str, ...] = ("```json",),
+    require_files_payload: bool = True,
 ) -> str:
     """
-    Runs a bounded tool-calling loop and guarantees a final JSON text response.
-    If the model exhausts tool turns without emitting JSON, forces one final
-    tool-free invocation so code-generation nodes always receive file payloads.
+    Runs a bounded tool-calling loop and guarantees a final structured text response.
+    If the model exhausts tool turns without emitting the expected block, forces one
+    final tool-free invocation.
     """
     from langchain_core.messages import AIMessage, HumanMessage
+    import json
 
     llm_with_tools = llm.bind_tools(tools_list)
     tool_map = {t.name: t for t in tools_list}
@@ -662,7 +668,9 @@ def run_tool_loop_with_json_fallback(
 
     for turn in range(max_turns):
         if turn == nudge_after_turn:
-            if wrote_via_tool:
+            if nudge_message:
+                messages.append(HumanMessage(content=nudge_message))
+            elif wrote_via_tool:
                 messages.append(HumanMessage(
                     content=(
                         "You have written files using `write_file`. Finish any remaining files now, "
@@ -713,8 +721,10 @@ def run_tool_loop_with_json_fallback(
             break
 
         resp_text = extract_text_content(response)
-        if "```json" in resp_text and '"files"' in resp_text:
-            break
+        resp_lower = resp_text.lower()
+        if any(marker.lower() in resp_lower for marker in stop_markers):
+            if not require_files_payload or '"files"' in resp_text:
+                break
 
         if any(tc.get("name") == "write_file" for tc in (response.tool_calls or [])):
             wrote_via_tool = True
@@ -726,25 +736,26 @@ def run_tool_loop_with_json_fallback(
         if not isinstance(msg, AIMessage) and getattr(msg, "type", "") != "ai":
             continue
         text = extract_text_content(msg)
-        if text and ("```json" in text or ('"files"' in text and '"terminal_commands"' in text)):
-            # Avoid accepting a premature empty files: [] response if write_file wasn't used
-            if not wrote_via_tool and ('"files": []' in text or '"files":[]' in text):
+        text_lower = text.lower()
+        has_marker = any(marker.lower() in text_lower for marker in stop_markers)
+        has_files_obj = require_files_payload and ('"files"' in text and '"terminal_commands"' in text)
+        if text and (has_marker or has_files_obj):
+            if require_files_payload and not wrote_via_tool and ('"files": []' in text or '"files":[]' in text):
                 continue
             final_content = text
             break
 
     if not final_content:
-        if wrote_via_tool:
+        if require_files_payload and wrote_via_tool:
             return '{"terminal_commands": [], "files": []}'
-        print(f"[{agent_name}] Tool loop finished without non-empty JSON; forcing tool-free JSON generation.")
-        messages.append(HumanMessage(
-            content=(
-                "STOP calling tools immediately. Output ONLY the valid JSON object matching "
-                '{"terminal_commands": [...], "files": [{"path": "...", "content": "..."}]} '
-                "wrapped in ```json ... ```. You MUST include full, runnable source files in \"files\" "
-                "(do NOT return an empty \"files\": [] array). Do not include any prose outside the JSON block."
-            )
-        ))
+        print(f"[{agent_name}] Tool loop finished without structured output; forcing tool-free final generation.")
+        fallback_text = final_fallback_prompt or (
+            "STOP calling tools immediately. Output ONLY the valid JSON object matching "
+            '{"terminal_commands": [...], "files": [{"path": "...", "content": "..."}]} '
+            "wrapped in ```json ... ```. You MUST include full, runnable source files in \"files\" "
+            "(do NOT return an empty \"files\": [] array). Do not include any prose outside the JSON block."
+        )
+        messages.append(HumanMessage(content=fallback_text))
         final_resp = llm_invoke_with_retry(llm, messages, label=f"{agent_name} (Final JSON)")
         final_content = extract_text_content(final_resp)
 
