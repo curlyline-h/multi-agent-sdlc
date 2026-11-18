@@ -6,7 +6,11 @@ Flow:
 """
 from pathlib import Path
 from langchain_core.prompts import PromptTemplate
-from agents.src.shared.llm import get_llm, llm_invoke_with_retry, llm_tool_invoke_with_retry, execute_tool_calls
+from agents.src.shared.llm import (
+    get_llm,
+    llm_invoke_with_retry,
+    run_tool_loop_with_json_fallback,
+)
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field, AliasChoices
 from typing import Dict, Any, List
@@ -116,63 +120,33 @@ def generate_tests_node(state: QAState) -> dict:
     )
     
     tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, run_test_suite, generate_bug_report]
-    llm_with_tools = _llm.bind_tools(tools_list)
-    
     messages: list[Any] = [
         SystemMessage(content="You are a QA Automation Engineer."),
         HumanMessage(content=formatted)
     ]
-    
-    # ReAct Loop
-    for turn in range(8):
-        try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="QA", tools=tools_list)
-        except Exception as e:
-            if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
-                import ast
-                error_str = str(e)
-                start_idx = error_str.find("'{")
-                end_idx = error_str.rfind("}'") + 2
-                if start_idx != -1 and end_idx != -1:
-                    if end_idx == -1 or end_idx <= start_idx:
-                        end_idx = error_str.rfind("'")
-                    try:
-                        raw_fg = error_str[start_idx:end_idx].replace("\\n", "\n").replace("\\'", "'")
-                        failed_gen = json.loads(raw_fg, strict=False)
-                        args = failed_gen.get("arguments", {})
-                        class DummyResponse:
-                            content = json.dumps(args) if isinstance(args, dict) else str(args)
-                            tool_calls = []
-                        response = DummyResponse()
-                    except Exception:
-                        raise e
-                else:
-                    raise e
-            else:
-                print(f"[QA Agent] LLM generation failed with error: {e}. Proceeding to fallback test suite.")
-                break
-                
-        messages.append(response)
-        
-        if not getattr(response, "tool_calls", []):
-            break
-            
-        # Check if it accidentally provided the TS block alongside tool calls
-        if isinstance(response.content, str) and "```typescript" in response.content.lower():
-            break
-            
-        tool_map = {tool.name: tool for tool in tools_list}
-        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="QA"))
-    
-    # Find the content containing the typescript block
-    content = ""
-    for msg in reversed(messages):
-        if hasattr(msg, "content") and isinstance(msg.content, str) and ("```typescript" in msg.content.lower() or "```ts" in msg.content.lower()):
-            content = msg.content
-            break
-    if not content:
-        raw_content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
-        content = raw_content if isinstance(raw_content, str) else str(raw_content)
+
+    try:
+        content = run_tool_loop_with_json_fallback(
+            _llm,
+            tools_list,
+            messages,
+            agent_name="QA",
+            max_turns=6,
+            nudge_after_turn=3,
+            nudge_message=(
+                "Stop inspecting files and output your Playwright TypeScript test suite now "
+                "wrapped EXACTLY in a ```typescript ... ``` block."
+            ),
+            final_fallback_prompt=(
+                "STOP calling tools immediately. Output ONLY the Playwright TypeScript test code "
+                "wrapped in ```typescript ... ```. Do not include any prose outside the code block."
+            ),
+            stop_markers=("```typescript", "```ts"),
+            require_files_payload=False,
+        )
+    except Exception as e:
+        print(f"[QA Agent] LLM generation failed with error: {e}. Proceeding without E2E script.")
+        content = ""
         
     match = re.search(r'```(?:typescript|ts)\s*(.*?)\s*```', content, re.DOTALL | re.IGNORECASE)
     if match:
@@ -214,9 +188,16 @@ export default defineConfig({
 # ---------------------------------------------------------------------------
 def execute_tests_node(state: QAState) -> dict:
     """
-    Runs the generated test suite using the real tool.
+    Verifies the project compiles/builds cleanly first, then runs the automated test suite.
+    Any build or test failure is returned so analyze_failures_node routes a fix task
+    to the responsible developer agent.
     """
-    # Actually execute the tests in the output directory
+    from agents.src.shared.verifier import verify_project_build
+
+    build_ok, build_errors = verify_project_build(label="QA-Build")
+    if not build_ok:
+        return {"test_run_output": f"TEST_EXECUTION_FAILED (Build/Compile Error):\n{build_errors}"}
+
     output = run_test_suite.invoke({})
     return {"test_run_output": output}
 
@@ -283,21 +264,25 @@ def analyze_failures_node(state: QAState) -> dict:
     new_tasks = []
     import time
     
-    # Smart role routing based on failing file paths in the bug description
+    # Smart role routing based on failing file paths, stack, and error details.
+    # Never route failed test/build runs back to 'qa' — route to the agent that can fix the code.
     def _route_bug(bug: BugReport) -> str:
         text = f"{bug.title} {bug.actual} {bug.steps}".lower()
-        if any(k in text for k in ["api", "endpoint", "route", "server", "database", "db", "sql", "model", "migration"]):
-            return "backend"
-        if any(k in text for k in ["component", "render", "ui", "css", "html", "dom", "canvas", "style", "layout"]):
-            return "frontend"
-        if any(k in text for k in ["test", "spec", "jest", "pytest", "playwright", "fixture"]):
-            return "qa"
-        if any(k in text for k in ["docker", "deploy", "ci", "pipeline", "workflow"]):
+        if any(k in text for k in ["sql", "migration", "schema", "alembic", "postgres", "sqlite", "database"]):
+            return "database_engineer"
+        if any(k in text for k in ["docker", "dockerfile", "compose", "ci/cd", "github actions", "terraform", "deploy"]):
             return "devops"
-        return "backend"  # safe default for ambiguous failures
-    
+        if any(k in text for k in [
+            "component", "render", "ui", "css", "html", "dom", "canvas", "style", "layout",
+            "tsx", "jsx", "view", "panel", "frame", "swing", "jframe", "jpanel", "awt",
+            "frontend", "next", "react", "vite", "tailwind",
+        ]):
+            return "frontend"
+        return "backend"
+
     # For each bug, log it using the tool and create a workflow task
-    for bug in response.discovered_bugs:
+    base_ts = int(time.time())
+    for idx, bug in enumerate(response.discovered_bugs):
         # 1. Log bug to BUGS.md
         generate_bug_report.invoke({
             "title": bug.title,
@@ -305,17 +290,19 @@ def analyze_failures_node(state: QAState) -> dict:
             "expected": bug.expected,
             "actual": bug.actual
         })
-        
-        # 2. Spawn task for Dispatcher
+
+        # 2. Spawn task for Dispatcher (short unique tag ensures re-try fixes are not skipped as already completed)
         new_tasks.append({
-            "id": f"task-bugfix-{int(time.time())}",
-            "title": f"Fix QA Bug: {bug.title} (Attempt {int(time.time())})",
-            "description": f"A bug was discovered during QA testing.\n\nSteps:\n{bug.steps}\n\nExpected:\n{bug.expected}\n\nActual:\n{bug.actual}",
+            "id": f"task-bugfix-{base_ts}-{idx}",
+            "title": f"Fix QA Bug: {bug.title} (#{base_ts % 10000}-{idx})",
+            "description": (
+                "A build or test error was discovered during QA verification. Resolve the root cause and verify the build passes.\n\n"
+                f"Steps:\n{bug.steps}\n\nExpected:\n{bug.expected}\n\nActual:\n{bug.actual}"
+            ),
             "assignee_role": _route_bug(bug),
             "dependencies": [],
             "priority": 1 # High priority
         })
-        time.sleep(1) # Ensure unique IDs
         
     return {
         "discovered_bugs": [bug.model_dump() for bug in response.discovered_bugs],
@@ -330,6 +317,11 @@ def pop_task_node(state: QAState) -> dict:
     tasks = list(state.workflow_tasks)
     if not tasks:
         return {"current_task": None}
+    if len(tasks) > 1:
+        combined_titles = "; ".join(t.get("title", "") for t in tasks if isinstance(t, dict))
+        combined_desc = "\n".join(t.get("description", "") for t in tasks if isinstance(t, dict))
+        merged = {**tasks[0], "title": combined_titles, "description": combined_desc}
+        return {"workflow_tasks": [], "current_task": merged}
     next_task = tasks.pop(0)
     return {"workflow_tasks": tasks, "current_task": next_task}
 

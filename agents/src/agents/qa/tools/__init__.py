@@ -66,11 +66,17 @@ def run_test_suite() -> str:
     elif (output_dir / "build.gradle").exists() or (output_dir / "build.gradle.kts").exists():
         cmd = "gradlew.bat test" if (os.name == "nt" and (output_dir / "gradlew.bat").exists()) else "gradle test"
         timeout = 300
-    elif has_playwright_cfg and "@playwright/test" in pkg_deps:
+    elif has_playwright_cfg and "@playwright/test" in pkg_deps and (output_dir / "node_modules" / "@playwright" / "test").exists():
         cmd = "npx --no-install playwright test --workers=1"
         timeout = 180
-    elif pkg.exists() and pkg_scripts.get("test"):
-        cmd = "npm test --silent"
+    elif pkg.exists() and pkg_scripts.get("test") and (output_dir / "node_modules").exists():
+        test_script = str(pkg_scripts.get("test", "")).lower()
+        if "jest" in test_script or "react-scripts" in test_script:
+            cmd = "npm test -- --watchAll=false --passWithNoTests"
+        elif "vitest" in test_script:
+            cmd = "npx --no-install vitest run"
+        else:
+            cmd = "npm test --silent"
         timeout = 180
     elif (output_dir / "pytest.ini").exists() or (output_dir / "tests").exists() and list(output_dir.rglob("test_*.py")):
         cmd = "pytest -q"
