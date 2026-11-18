@@ -37,8 +37,8 @@ def _is_queue_empty(state: BackendDevState) -> str:
 # Router: Did Linter Pass?
 # ---------------------------------------------------------------------------
 def _did_linter_pass(state: BackendDevState) -> str:
-    """If there are linter errors, loop back to write_code."""
-    max_iterations = 2
+    """If there are linter/build errors, loop back to write_code to fix them."""
+    max_iterations = 3
     if state.linter_errors and state.iteration_count < max_iterations:
         return "write_code"
     return "run_tests"

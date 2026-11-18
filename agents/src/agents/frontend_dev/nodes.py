@@ -247,71 +247,31 @@ def write_ui_code_node(state: FrontendDevState) -> dict:
 # 3. Lint Code Node
 # ---------------------------------------------------------------------------
 def lint_code_node(state: FrontendDevState) -> dict:
-    """Runs a TypeScript syntax check against generated files in the output/ directory."""
-    import subprocess as _sp
+    """Runs a stack-aware build/compile check against generated files in the active project workspace."""
     from agents.src.shared.workspace import get_output_dir
+    from agents.src.shared.verifier import verify_project_build
+
     output_dir = get_output_dir()
     if not output_dir.exists():
         return {"linter_errors": ""}
-    
-    try:
-        tsconfig = output_dir / "tsconfig.json"
-        has_ui_files = any(
-            p.is_file()
-            and "node_modules" not in p.parts
-            and p.suffix in {".tsx", ".jsx", ".html", ".vue", ".svelte", ".java", ".kt", ".swift", ".dart"}
-            for p in output_dir.rglob("*")
-        )
-        if not has_ui_files:
-            msg = "No UI source files (.tsx, .jsx, .html, .vue, .svelte, .java, .kt, .swift, .dart) were generated yet. Use `write_file` to create the actual source files."
-            print(f"Frontend Dev lint: FAILED ({msg})")
-            return {"linter_errors": msg}
 
-        if (output_dir / "pom.xml").exists():
-            from agents.src.shared.proc import run_command_safe
-            rc, out, err, timed_out = run_command_safe("mvn -B -q compile", output_dir, timeout=120)
-            if timed_out:
-                return {"linter_errors": "Maven compile timed out after 120s."}
-            if rc == 0:
-                print("Frontend Dev lint (mvn compile): PASSED")
-                return {"linter_errors": ""}
-            errors = (out + err)[-2000:]
-            print(f"Frontend Dev lint (mvn compile): FAILED\n{errors}")
-            return {"linter_errors": errors}
+    has_ui_files = any(
+        p.is_file()
+        and "node_modules" not in p.parts
+        and p.suffix in {".tsx", ".jsx", ".html", ".vue", ".svelte", ".java", ".kt", ".swift", ".dart", ".ts", ".js"}
+        for p in output_dir.rglob("*")
+    )
+    if not has_ui_files:
+        msg = "No UI source files (.tsx, .jsx, .html, .vue, .svelte, .java, .kt, .swift, .dart) were generated yet. Use `write_file` to create the actual source files."
+        print(f"Frontend Dev lint: FAILED ({msg})")
+        return {"linter_errors": msg}
 
-        if tsconfig.exists():
-            cmd = "npx tsc --noEmit --skipLibCheck"
-        else:
-            # Fallback: find all TS files and check them manually
-            ts_files = []
-            for p in output_dir.rglob("*"):
-                if p.is_file() and p.suffix in [".ts", ".tsx"] and "node_modules" not in p.parts:
-                    ts_files.append(f'"{p.relative_to(output_dir)}"')
-                    
-            if not ts_files:
-                return {"linter_errors": ""}
-                
-            # Force check with sensible defaults
-            cmd = f"npx tsc --noEmit --skipLibCheck --allowJs --jsx react-jsx {' '.join(ts_files)}"
-
-        res = _sp.run(
-            cmd,
-            shell=True, cwd=str(output_dir),
-            capture_output=True, text=True, timeout=60, check=False
-        )
-        if res.returncode == 0:
-            print("Frontend Dev lint: PASSED")
-            return {"linter_errors": ""}
-        else:
-            errors = (res.stdout + res.stderr)[:2000]
-            if "TS18003" in errors:
-                print("Frontend Dev lint: no TS input files yet — skipping.")
-                return {"linter_errors": ""}
-            print(f"Frontend Dev lint: FAILED\n{errors}")
-            return {"linter_errors": errors}
-    except Exception as e:
-        print(f"Frontend Dev lint: skipped ({e})")
+    passed, errors = verify_project_build(output_dir=output_dir, label="Frontend Dev")
+    if passed:
+        print("Frontend Dev build check: PASSED")
         return {"linter_errors": ""}
+    print(f"Frontend Dev build check: FAILED\n{errors}")
+    return {"linter_errors": errors}
 
 # ---------------------------------------------------------------------------
 # 4. Run Tests Node

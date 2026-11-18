@@ -249,15 +249,23 @@ def write_code_node(state: BackendDevState) -> dict:
 # ---------------------------------------------------------------------------
 def lint_code_node(state: BackendDevState) -> dict:
     """
-    Runs the syntax linter against the generated code.
+    Runs a stack-aware build/compile verification against the generated codebase
+    (Maven, Gradle, Node/TypeScript, Python py_compile, Go, Rust, .NET).
     """
     from agents.src.shared.workspace import count_source_files
+    from agents.src.shared.verifier import verify_project_build
+
     if count_source_files() == 0:
         msg = "No backend source files were generated yet (only folders/docs exist). Use `write_file` to create the actual source code files."
         print(f"Backend Dev lint: FAILED ({msg})")
         return {"linter_errors": msg}
-    result = code_linter.invoke({"file_path": "backend/src/temp.py"})
-    return {"linter_errors": "" if result == "LINT_PASSED" else result}
+
+    passed, errors = verify_project_build(label="Backend Dev")
+    if passed:
+        print("Backend Dev build check: PASSED")
+        return {"linter_errors": ""}
+    print(f"Backend Dev build check: FAILED\n{errors}")
+    return {"linter_errors": errors}
 
 # ---------------------------------------------------------------------------
 # 4. Run Tests Node
