@@ -1,4 +1,4 @@
-﻿"""
+"""
 Security Agent â€” Node Functions
 
 Flow:
@@ -6,7 +6,7 @@ Flow:
 """
 from pathlib import Path
 from langchain_core.prompts import PromptTemplate
-from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry, execute_tool_calls
+from agents.src.shared.llm import get_llm, run_tool_loop_with_json_fallback
 from langchain_core.messages import SystemMessage, HumanMessage
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
@@ -105,81 +105,49 @@ def analyze_vulnerabilities_node(state: SecurityState) -> dict:
     )
     
     tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, run_sast_scanner, check_dependencies, file_security_ticket]
-    llm_with_tools = _llm.bind_tools(tools_list)
-    
-    messages = [
+    messages: list[Any] = [
         SystemMessage(content="You are a Principal AppSec Engineer."),
         HumanMessage(content=formatted)
     ]
-    
-    # ReAct Loop
-    for turn in range(8):
-        try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="Security", tools=tools_list)
-        except Exception as e:
-            if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
-                import ast
-                error_str = str(e)
-                start_idx = error_str.find("'{")
-                end_idx = error_str.rfind("}'") + 2
-                if start_idx != -1 and end_idx != -1:
-                    if end_idx == -1 or end_idx <= start_idx:
-                        end_idx = error_str.rfind("'")
-                    try:
-                        raw_fg = error_str[start_idx:end_idx].replace("\\n", "\n").replace("\\'", "'")
-                        failed_gen = json.loads(raw_fg, strict=False)
-                        args = failed_gen.get("arguments", {})
-                        class DummyResponse:
-                            content = json.dumps(args) if isinstance(args, dict) else str(args)
-                            tool_calls = []
-                        response = DummyResponse()
-                    except Exception:
-                        raise e
-                else:
-                    raise e
-            else:
-                raise e
-                
-        messages.append(response)
-        
-        if not getattr(response, "tool_calls", []):
-            break
-            
-        # Check if it accidentally provided the JSON block alongside tool calls
-        if response.content and "```json" in response.content:
-            break
-            
-        tool_map = {tool.name: tool for tool in tools_list}
-        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="Security"))
-    
+
     try:
-        # Find the content containing the JSON
-        content = ""
-        for msg in reversed(messages):
-            if hasattr(msg, "content") and isinstance(msg.content, str) and "```json" in msg.content:
-                content = msg.content
-                break
-        if not content:
-            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
-            
+        content = run_tool_loop_with_json_fallback(
+            _llm,
+            tools_list,
+            messages,
+            agent_name="Security",
+            max_turns=6,
+            nudge_after_turn=3,
+            nudge_message=(
+                "Stop calling inspection tools and output your final SecurityAnalysis JSON now "
+                'wrapped in ```json ... ```: {"report": "...", "is_approved": true/false, "vulnerabilities": []}.'
+            ),
+            final_fallback_prompt=(
+                "STOP calling tools immediately. Output ONLY valid JSON matching "
+                '{"report": "...", "is_approved": true, "vulnerabilities": []} wrapped in ```json ... ```.'
+            ),
+            stop_markers=("```json",),
+            require_files_payload=False,
+        )
+
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            
+
         if json_match:
             parsed = json.loads(json_match.group(1) if '```' in content else json_match.group(0))
         else:
             parsed = json.loads(content)
-            
+
         parsed_response = SecurityAnalysis(**parsed)
     except Exception as e:
         print(f"[Security Agent] JSON parsing failed: {e}. Defaulting to approval.")
         parsed_response = SecurityAnalysis(report="Security scan completed cleanly.", is_approved=True, vulnerabilities=[])
-    
+
     return {
         "security_report": parsed_response.report,
         "security_approved": parsed_response.is_approved,
-        "internal_vulnerabilities": [v.dict() for v in parsed_response.vulnerabilities]
+        "internal_vulnerabilities": [v.model_dump() for v in parsed_response.vulnerabilities]
     }
 
 # ---------------------------------------------------------------------------
@@ -189,6 +157,11 @@ def pop_task_node(state: SecurityState) -> dict:
     tasks = list(state.workflow_tasks)
     if not tasks:
         return {"current_task": None}
+    if len(tasks) > 1:
+        combined_titles = "; ".join(t.get("title", "") for t in tasks if isinstance(t, dict))
+        combined_desc = "\n".join(t.get("description", "") for t in tasks if isinstance(t, dict))
+        merged = {**tasks[0], "title": combined_titles, "description": combined_desc}
+        return {"workflow_tasks": [], "current_task": merged}
     next_task = tasks.pop(0)
     return {"workflow_tasks": tasks, "current_task": next_task}
 
@@ -212,7 +185,8 @@ def enforce_security_gate_node(state: SecurityState) -> dict:
             # Fallback if the LLM flagged but didn't extract specific items
             vulns = [{"title": "General Security Block", "severity": "HIGH", "mitigation": "Review SAST logs"}]
             
-        for v in vulns:
+        base_ts = int(time.time())
+        for idx, v in enumerate(vulns):
             if isinstance(v, dict):
                 v_title = v.get("title", "Vuln")
                 v_sev = v.get("severity", "HIGH")
@@ -227,16 +201,15 @@ def enforce_security_gate_node(state: SecurityState) -> dict:
                 "severity": v_sev,
                 "mitigation": v_mit
             })
-            
+
             # Spawn a new task for the orchestrator
             new_tasks.append({
-                "id": f"task-sec-{int(time.time())}",
-                "title": f"Address Security Vulnerabilities (Attempt {int(time.time())})",
-                "description": f"The Security Agent found issues.\n\nIssues:\n{state.security_comments}\n\nMitigation:\n{v_mit}",
+                "id": f"task-sec-{base_ts}-{idx}",
+                "title": f"Address Security Vulnerabilities: {v_title}",
+                "description": f"The Security Agent found issues.\n\nReport:\n{state.security_report}\n\nMitigation:\n{v_mit}",
                 "assignee_role": "backend", # Usually backend handles sec fixes
                 "dependencies": [],
                 "priority": 1 # Security fixes are top priority
             })
-            time.sleep(1)
             
     return {"new_workflow_tasks": new_tasks}

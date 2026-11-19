@@ -1,4 +1,4 @@
-﻿"""
+"""
 Reviewer Agent â€” Node Functions
 
 Flow:
@@ -6,7 +6,7 @@ Flow:
 """
 from pathlib import Path
 from langchain_core.prompts import PromptTemplate
-from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry, execute_tool_calls
+from agents.src.shared.llm import get_llm, run_tool_loop_with_json_fallback
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 
@@ -98,72 +98,40 @@ def review_code_node(state: ReviewerState) -> dict:
     formatted = prompt.format(report=state.complexity_report, code=code_content)
     
     tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, run_complexity_analysis, leave_pr_comment, merge_pull_request]
-    llm_with_tools = _llm.bind_tools(tools_list)
-    
-    messages = [
+    messages: list[Any] = [
         SystemMessage(content="You are a Principal Software Engineer (Reviewer Agent)."),
         HumanMessage(content=formatted)
     ]
-    
-    # ReAct Loop
-    for turn in range(8):
-        try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="Reviewer", tools=tools_list)
-        except Exception as e:
-            if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
-                import ast
-                error_str = str(e)
-                start_idx = error_str.find("'{")
-                end_idx = error_str.rfind("}'") + 2
-                if start_idx != -1 and end_idx != -1:
-                    if end_idx == -1 or end_idx <= start_idx:
-                        end_idx = error_str.rfind("'")
-                    try:
-                        raw_fg = error_str[start_idx:end_idx].replace("\\n", "\n").replace("\\'", "'")
-                        failed_gen = json.loads(raw_fg, strict=False)
-                        args = failed_gen.get("arguments", {})
-                        class DummyResponse:
-                            content = json.dumps(args) if isinstance(args, dict) else str(args)
-                            tool_calls = []
-                        response = DummyResponse()
-                    except Exception:
-                        raise e
-                else:
-                    raise e
-            else:
-                raise e
-                
-        messages.append(response)
-        
-        if not getattr(response, "tool_calls", []):
-            break
-            
-        # Check if it accidentally provided the JSON block alongside tool calls
-        if response.content and "```json" in response.content:
-            break
-            
-        tool_map = {tool.name: tool for tool in tools_list}
-        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="Reviewer"))
 
     try:
-        # Find the content containing the JSON
-        content = ""
-        for msg in reversed(messages):
-            if hasattr(msg, "content") and isinstance(msg.content, str) and "```json" in msg.content:
-                content = msg.content
-                break
-        if not content:
-            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
-            
+        content = run_tool_loop_with_json_fallback(
+            _llm,
+            tools_list,
+            messages,
+            agent_name="Reviewer",
+            max_turns=6,
+            nudge_after_turn=3,
+            nudge_message=(
+                "Stop calling inspection tools and output your final ReviewResponse JSON now "
+                'wrapped in ```json ... ```: {"feedback": "...", "is_approved": true/false}.'
+            ),
+            final_fallback_prompt=(
+                "STOP calling tools immediately. Output ONLY valid JSON matching "
+                '{"feedback": "...", "is_approved": true} wrapped in ```json ... ```.'
+            ),
+            stop_markers=("```json",),
+            require_files_payload=False,
+        )
+
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            
+
         if json_match:
             parsed = json.loads(json_match.group(1) if '```' in content else json_match.group(0))
         else:
             parsed = json.loads(content)
-            
+
         parsed_response = ReviewResponse(**parsed)
     except Exception as e:
         print(f"[Reviewer Agent] JSON parsing failed: {e}. Defaulting to approval.")
@@ -233,6 +201,11 @@ def pop_task_node(state: ReviewerState) -> dict:
     tasks = list(state.workflow_tasks)
     if not tasks:
         return {"current_task": None}
+    if len(tasks) > 1:
+        combined_titles = "; ".join(t.get("title", "") for t in tasks if isinstance(t, dict))
+        combined_desc = "\n".join(t.get("description", "") for t in tasks if isinstance(t, dict))
+        merged = {**tasks[0], "title": combined_titles, "description": combined_desc}
+        return {"workflow_tasks": [], "current_task": merged}
     next_task = tasks.pop(0)
     return {"workflow_tasks": tasks, "current_task": next_task}
 
