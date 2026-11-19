@@ -25,7 +25,46 @@ _subgraph_counters = {}
 
 import asyncio
 import os
+import sqlite3
 from agents.src.shared.checkpointer import get_async_checkpointer
+
+
+def _get_persisted_subgraph_counter(thread_id: str, db_path: str = "checkpoints.sqlite") -> int:
+    """Loads persisted interrupt counter for a subgraph thread so restarts never replay consumed interrupts."""
+    if thread_id in _subgraph_counters:
+        return _subgraph_counters[thread_id]
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS subgraph_interrupt_counters (thread_id TEXT PRIMARY KEY, count INTEGER NOT NULL)"
+            )
+            row = conn.execute(
+                "SELECT count FROM subgraph_interrupt_counters WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            val = int(row[0]) if row else 0
+            _subgraph_counters[thread_id] = val
+            return val
+    except Exception:
+        _subgraph_counters[thread_id] = 0
+        return 0
+
+
+def _set_persisted_subgraph_counter(thread_id: str, count: int, db_path: str = "checkpoints.sqlite") -> None:
+    _subgraph_counters[thread_id] = count
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS subgraph_interrupt_counters (thread_id TEXT PRIMARY KEY, count INTEGER NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO subgraph_interrupt_counters (thread_id, count) VALUES (?, ?) "
+                "ON CONFLICT(thread_id) DO UPDATE SET count = excluded.count",
+                (thread_id, count),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 _SUBGRAPH_TIMEOUT = int(os.getenv("SUBGRAPH_TIMEOUT_SECONDS", "600"))
 
@@ -44,8 +83,7 @@ async def _stream_subgraph(bound_subgraph, stream_input, config, thread_id: str,
 
 async def _run_subgraph_with_interrupts(subgraph, initial_input, config):
     thread_id = config["configurable"]["thread_id"]
-    if thread_id not in _subgraph_counters:
-        _subgraph_counters[thread_id] = 0
+    persisted_count = _get_persisted_subgraph_counter(thread_id)
         
     async with get_async_checkpointer("checkpoints.sqlite") as checkpointer:
         bound_subgraph = subgraph.builder.compile(checkpointer=checkpointer)
@@ -77,23 +115,26 @@ async def _run_subgraph_with_interrupts(subgraph, initial_input, config):
                 break  # Subgraph is completely finished
                 
             # If the subgraph is paused at a user interaction node (like user_approval),
-            # broadcast this node name to the UI so the active highlight moves to it.
+            # broadcast this node name ONLY for the active (non-replayed) interrupt so
+            # LangGraph replays don't spam duplicate chat/terminal status lines.
             if has_sub_interrupts and sub_state.next:
-                from backend.telemetry import broadcast_subgraph_node
-                broadcast_subgraph_node(sub_state.next[0], thread_id)
+                if local_count >= persisted_count:
+                    from backend.telemetry import broadcast_subgraph_node
+                    broadcast_subgraph_node(sub_state.next[0], thread_id)
 
                 # Subgraph is paused at an interrupt. Bubble interrupt to parent.
                 user_response = interrupt(payload)
                 
                 local_count += 1
                 
-                # If we have already streamed this interrupt to the subgraph in memory,
+                # If we have already streamed this interrupt to the subgraph (even across restarts),
                 # skip streaming to avoid breaking the state during LangGraph replays.
-                if local_count <= _subgraph_counters[thread_id]:
+                if local_count <= persisted_count:
                     continue
                     
-                # We haven't streamed this one yet. Stream it!
-                _subgraph_counters[thread_id] += 1
+                # We haven't streamed this one yet. Persist counter & stream it!
+                persisted_count += 1
+                _set_persisted_subgraph_counter(thread_id, persisted_count)
                 
                 # Resume the subgraph with the user's response
                 await _stream_subgraph(bound_subgraph, Command(resume=user_response), config, thread_id, print_subtask=True)
@@ -115,13 +156,29 @@ async def planning_stage(state: WorkflowState) -> dict:
         {"user_req": state.user_req},
         {"configurable": {"thread_id": f"{state.workflowId}-planning"}}
     )
-    updated_req = (out.get("user_req") if isinstance(out, dict) else None) or state.user_req
-    return {"user_req": updated_req}
+    if not isinstance(out, dict):
+        return {"user_req": state.user_req}
+    updated_req = out.get("user_req") or state.user_req
+    return {
+        "user_req": updated_req,
+        "final_plan": out.get("final_plan", ""),
+        "complexity_level": out.get("complexity_level", "medium"),
+        "project_type": out.get("project_type", "other"),
+        "constraints": out.get("constraints", []),
+        "risks": out.get("risks", []),
+    }
 
 async def pm_phase_a_stage(state: WorkflowState) -> dict:
     out = await _run_subgraph_with_interrupts(
         pm_phase_a_subgraph,
-        {"user_req": state.user_req},
+        {
+            "user_req": state.user_req,
+            "final_plan": state.final_plan,
+            "complexity_level": state.complexity_level,
+            "project_type": state.project_type,
+            "constraints": state.constraints,
+            "risks": state.risks,
+        },
         {"configurable": {"thread_id": f"{state.workflowId}-pm_a"}}
     )
     project_name = out.get("project_name", "")
@@ -173,7 +230,7 @@ async def task_breakdown_stage(state: WorkflowState) -> dict:
     }
 
 async def pm_phase_b_stage(state: WorkflowState) -> dict:
-    await _run_subgraph_with_interrupts(
+    res = await _run_subgraph_with_interrupts(
         pm_phase_b_subgraph,
         {
             "workflow_tasks": state.workflow_tasks,
@@ -183,13 +240,25 @@ async def pm_phase_b_stage(state: WorkflowState) -> dict:
         },
         {"configurable": {"thread_id": f"{state.workflowId}-pm_b"}}
     )
-    return {}
+    ticket_keys = res.get("jira_ticket_keys", []) if isinstance(res, dict) else []
+    epic_key = res.get("jira_epic_key", "") if isinstance(res, dict) else ""
+
+    updated_tasks = [dict(t) if isinstance(t, dict) else t for t in state.workflow_tasks]
+    for task, key in zip(updated_tasks, ticket_keys):
+        if isinstance(task, dict) and key:
+            task["jira_key"] = key
+
+    if epic_key:
+        from agents.src.shared.jira_client import transition_jira_issues
+        transition_jira_issues([epic_key], "In Progress")
+
+    return {"workflow_tasks": updated_tasks} if updated_tasks else {}
 
 # ===========================================================================
 # DISPATCHER LOOP & WRAPPERS
 # ===========================================================================
 
-MAX_DISPATCHER_ITERATIONS = 50
+MAX_DISPATCHER_ITERATIONS = 25
 
 def dispatcher_stage(state: WorkflowState) -> dict:
     """
@@ -329,7 +398,7 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
     # returning stale results from a previous run.
     task_titles = sorted(t.get("title", "") for t in state.active_tasks)
     batch_hash = hashlib.md5("::".join(task_titles).encode()).hexdigest()[:8]
-    unique_thread_id = f"{state.workflowId}-{role_name}-{batch_hash}"
+    unique_thread_id = f"{state.workflowId}-{role_name}-{batch_hash}-{state.dispatcher_iteration_count}"
 
     print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] Executing {role_name} with thread_id='{unique_thread_id}' for tasks: {task_titles}")
 
@@ -349,6 +418,15 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
             "active_tasks": [],
             "active_pr_number": state.active_pr_number,
         }
+
+    from agents.src.shared.jira_client import transition_jira_issues
+    jira_keys = [
+        t.get("jira_key", "")
+        for t in state.active_tasks
+        if isinstance(t, dict) and t.get("jira_key")
+    ]
+    if jira_keys:
+        transition_jira_issues(jira_keys, "In Progress")
 
     subgraph_input = {
         "project_name": state.project_name if state.project_name else state.projectId,
@@ -409,6 +487,24 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
         is_rejected = True
     if "security_approved" in out and not out["security_approved"]:
         is_rejected = True
+
+    # Cap gate rejection loops so QA / Reviewer / Security cannot bounce indefinitely
+    _GATE_PREFIXES = {
+        "qa": "Fix QA Bug:",
+        "reviewer": "Address Code Review Feedback",
+        "security": "Address Security Vulnerabilities",
+    }
+    cap_reached = False
+    if is_rejected and role_name in _GATE_PREFIXES:
+        prefix = _GATE_PREFIXES[role_name]
+        prior_fix_tasks = sum(
+            1 for t in new_global_tasks
+            if isinstance(t, dict) and str(t.get("title", "")).startswith(prefix)
+        )
+        if prior_fix_tasks >= 2:
+            print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} reached max retry cycles ({prior_fix_tasks}). Marking gate task complete to prevent infinite loop.")
+            is_rejected = False
+            cap_reached = True
         
     if not is_rejected:
         # Mark tasks as completed
@@ -416,12 +512,14 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
             title = t.get("title", "")
             if title not in new_completed:  # Prevent duplicate entries
                 new_completed.append(title)
+        if jira_keys:
+            transition_jira_issues(jira_keys, "Done")
         print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} APPROVED. Completed: {[t.get('title','') for t in state.active_tasks]}")
     else:
         print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} REJECTED. Tasks NOT marked complete.")
             
     # Pull any newly spawned tasks (e.g., bug fixes, PR revisions)
-    new_tasks = out.get("new_workflow_tasks") if isinstance(out, dict) else None
+    new_tasks = out.get("new_workflow_tasks") if (not cap_reached and isinstance(out, dict)) else None
     if isinstance(new_tasks, list) and new_tasks:
         new_global_tasks.extend(new_tasks)
         print(f"[SUBGRAPH][{_time.strftime('%H:%M:%S')}] {role_name} spawned {len(new_tasks)} new task(s).")
