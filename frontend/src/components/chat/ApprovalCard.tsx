@@ -1,10 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { ApprovalRequest } from '@/types/chat';
-import { useChatStore } from '@/store/chatStore';
-import { respondToApproval } from '@/lib/api';
-import { CheckCircle2, XCircle, MessageSquare, FileText } from 'lucide-react';
+import { MessageSquare, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -13,33 +11,7 @@ interface ApprovalCardProps {
 }
 
 export function ApprovalCard({ approval }: ApprovalCardProps) {
-  const [feedback, setFeedback] = useState('');
-  const [showFeedback, setShowFeedback] = useState(false);
-  const { submitApproval } = useChatStore();
-
   const isResolved = approval.status !== 'pending';
-
-  const handleApprove = async () => {
-    try {
-      await respondToApproval(approval.id, '');
-      submitApproval(approval.id, true);
-    } catch (err) {
-      console.error('Failed to send approval:', err);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!showFeedback) {
-      setShowFeedback(true);
-      return;
-    }
-    try {
-      await respondToApproval(approval.id, feedback);
-      submitApproval(approval.id, false, feedback);
-    } catch (err) {
-      console.error('Failed to send feedback:', err);
-    }
-  };
 
   const typeIcons: Record<string, React.ReactNode> = {
     prd: <FileText size={16} />,
@@ -96,21 +68,7 @@ export function ApprovalCard({ approval }: ApprovalCardProps) {
           </div>
         )}
 
-        {/* Feedback textarea */}
-        {showFeedback && !isResolved && (
-          <div className="mb-3 animate-slide-in-up">
-            <textarea
-              value={feedback}
-              onChange={(e) => setFeedback(e.target.value)}
-              placeholder="Describe the changes you'd like..."
-              className="w-full bg-[var(--bg-primary)] border border-[var(--border-default)] rounded-lg px-3 py-2 text-sm text-[var(--text-primary)] placeholder-[var(--text-dim)] resize-none focus:outline-none focus:border-[var(--accent-primary)] transition-colors"
-              rows={3}
-              autoFocus
-            />
-          </div>
-        )}
-
-        {/* Action buttons */}
+        {/* Action hint (Approve / Request Changes buttons are docked at the end of chat) */}
         {!isResolved && (
           isQuestionType ? (
             <div className="p-2 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-subtle)]">
@@ -120,21 +78,10 @@ export function ApprovalCard({ approval }: ApprovalCardProps) {
               </p>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleApprove}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--state-completed)] hover:bg-[var(--state-completed)]/90 text-white text-sm font-medium rounded-lg transition-all hover:shadow-lg hover:shadow-[var(--state-completed)]/20"
-              >
-                <CheckCircle2 size={14} />
-                Approve
-              </button>
-              <button
-                onClick={handleReject}
-                className="flex items-center gap-1.5 px-4 py-2 bg-[var(--bg-surface)] hover:bg-[var(--bg-hover)] text-[var(--state-approval)] text-sm font-medium rounded-lg border border-[var(--state-approval)]/30 transition-all"
-              >
-                <XCircle size={14} />
-                {showFeedback ? 'Submit Feedback' : 'Request Changes'}
-              </button>
+            <div className="p-2 bg-[var(--bg-secondary)] rounded-lg border border-[var(--border-subtle)]">
+              <p className="text-xs text-[var(--text-muted)] italic">
+                Use the Approve / Request Changes buttons at the bottom of the chat to respond.
+              </p>
             </div>
           )
         )}
