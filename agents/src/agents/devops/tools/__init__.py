@@ -27,23 +27,13 @@ def validate_iac_config(iac_code: str, config_type: str = "auto") -> str:
     if not (output_dir / "docker-compose.yml").exists() and not (output_dir / "docker-compose.yaml").exists():
         return "VALIDATION_PASSED: No docker-compose file found to validate."
         
-    try:
-        res = subprocess.run(
-            "docker compose config -q",
-            shell=True,
-            cwd=str(output_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30
-        )
-        if res.returncode == 0:
-            return "VALIDATION_PASSED: The configuration is syntactically correct."
-        else:
-            return f"VALIDATION_FAILED: {res.stderr[-2000:]}"
-    except Exception as e:
-        return f"VALIDATION_FAILED: Exception during validation - {e}"
+    from agents.src.shared.proc import run_command_safe
+    rc, stdout, stderr, timed_out = run_command_safe("docker compose config -q", output_dir, timeout=30)
+    if timed_out:
+        return "VALIDATION_FAILED: 'docker compose config -q' timed out after 30s."
+    if rc == 0:
+        return "VALIDATION_PASSED: The configuration is syntactically correct."
+    return f"VALIDATION_FAILED: {(stderr or stdout)[-2000:]}"
 
 @tool
 def run_deployment(plan: str) -> str:
@@ -51,24 +41,14 @@ def run_deployment(plan: str) -> str:
     Executes the deployment against the physical environment via Docker.
     Note: Usually the graph handles this automatically.
     """
+    from agents.src.shared.proc import run_command_safe
     output_dir = get_output_dir()
-    try:
-        res = subprocess.run(
-            "docker compose up -d --build",
-            shell=True,
-            cwd=str(output_dir),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False
-        )
-        if res.returncode == 0:
-            return f"DEPLOYMENT_SUCCESS: Containers started.\n{res.stdout[-4000:]}"
-        else:
-            return f"DEPLOYMENT_FAILED: {res.stderr[-4000:]}"
-    except Exception as e:
-        return f"DEPLOYMENT_FAILED: {e}"
+    rc, stdout, stderr, timed_out = run_command_safe("docker compose up -d --build", output_dir, timeout=180)
+    if timed_out:
+        return "DEPLOYMENT_FAILED: 'docker compose up -d --build' timed out after 180s."
+    if rc == 0:
+        return f"DEPLOYMENT_SUCCESS: Containers started.\n{stdout[-4000:]}"
+    return f"DEPLOYMENT_FAILED: {(stderr or stdout)[-4000:]}"
 
 @tool
 def health_check_ping(target_url: str) -> str:
