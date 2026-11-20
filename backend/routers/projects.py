@@ -93,11 +93,15 @@ async def resume_project_pipeline(
         raise HTTPException(status_code=404, detail="Project not found")
     if project.current_status == "STOPPED":
         raise HTTPException(status_code=400, detail="Project session was stopped and cannot be restarted.")
+    if project.current_status == "COMPLETED":
+        raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed.")
 
     wf_stmt = select(Workflow).where(Workflow.project_id == project_id)
     wf_row = (await db.execute(wf_stmt)).scalars().first()
     if wf_row and wf_row.status == "STOPPED":
         raise HTTPException(status_code=400, detail="Project session was stopped and cannot be restarted.")
+    if wf_row and wf_row.status == "COMPLETED":
+        raise HTTPException(status_code=400, detail="Project is already completed and cannot be resumed.")
 
     # Guard: if a PENDING approval exists, reject the blind resume so we don't
     # corrupt LangGraph's interrupt checkpoint with a null-feedback Command.

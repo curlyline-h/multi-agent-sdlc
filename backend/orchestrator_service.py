@@ -2,7 +2,7 @@ import asyncio
 import json as _json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,9 +38,11 @@ class OrchestratorService:
 
         stmt = select(Workflow).where(Workflow.project_id == project_id)
         wf: Any = (await db.execute(stmt)).scalars().first()
+        proj: Any = await db.get(Project, project_id)
+        if proj and proj.current_status == "COMPLETED":
+            return False
         if wf and wf.status in ("RUNNING", "AWAITING_APPROVAL", "PAUSED"):
             wf.status = "STOPPED"
-        proj: Any = await db.get(Project, project_id)
         if proj and proj.current_status not in ("COMPLETED",):
             proj.current_status = "STOPPED"
         await db.commit()
@@ -53,7 +55,7 @@ class OrchestratorService:
         await ws_manager.broadcast(pid_key, "LOG_EMITTED", {
             "agent_name": "orchestrator",
             "message": "🛑 Session stopped by user.",
-            "timestamp": str(datetime.utcnow()),
+            "timestamp": str(datetime.now(timezone.utc).replace(tzinfo=None)),
         })
         return cancelled
 
@@ -139,14 +141,14 @@ class OrchestratorService:
                             )
                             proj_row.path = str(active_project_dir)
                             await db.commit()
-                        elif is_resuming and existing_path:
+                        elif existing_path:
                             active_project_dir = set_active_project_dir(project_dir=existing_path)
                         else:
                             active_project_dir = set_active_project_dir(
                                 proj_label,
                                 unique_if_exists=not is_resuming,
                             )
-                            if proj_row and not existing_path:
+                            if proj_row:
                                 proj_row.path = str(active_project_dir)
                                 await db.commit()
                         logger.info(f"Active project workspace: {active_project_dir}")
@@ -176,8 +178,8 @@ class OrchestratorService:
                                 "user_req": user_req,
                                 "workflowId": thread_id,
                                 "projectId": str(project_id),
-                                "created_at": datetime.utcnow(),
-                                "updated_at": datetime.utcnow(),
+                                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
+                                "updated_at": datetime.now(timezone.utc).replace(tzinfo=None),
                                 "prd": "",
                                 "project_name": active_project_dir.name,
                                 "final_design_doc": "",
@@ -292,7 +294,7 @@ class OrchestratorService:
                                 await ws_manager.broadcast(str(project_id), "LOG_EMITTED", {
                                     "agent_name": "orchestrator",
                                     "message": f"✋ **Approval Required ({app_entry.request_details})** — saved `{draft_filename}` to your project folder.",
-                                    "timestamp": str(datetime.utcnow())
+                                    "timestamp": str(datetime.now(timezone.utc).replace(tzinfo=None))
                                 })
 
                         elif not graph_state.next and not has_interrupts:
@@ -358,46 +360,64 @@ class OrchestratorService:
 
         # Broadcast stage transition when a non-virtual parent node executes
         if not is_virtual:
+            stage_summary = str(state_update.get("summary", "")) if isinstance(state_update, dict) else ""
             await ws_manager.broadcast(str(project_id), "STAGE_CHANGED", {
                 "stage": node_name,
                 "active_role": wf.next_agent or node_name,
-                "state": wf.status
+                "state": wf.status,
+                "rejected": "REJECTED" in stage_summary,
             })
 
         if not isinstance(state_update, dict):
             return
 
-        # 1. Active / Workflow tasks updates (upsert by workflow_id + title to avoid duplicate rows)
-        if "workflow_tasks" in state_update:
-            completed_titles = set(state_update.get("completed_task_titles") or [])
+        # 1. Active / Workflow tasks updates (deduplicate + sync COMPLETED status)
+        if "workflow_tasks" in state_update or "completed_task_titles" in state_update:
             existing_rows = (
                 await db.execute(select(Task).where(Task.workflow_id == wf.id))
             ).scalars().all()
-            existing_by_title = {r.request_details: r for r in existing_rows}
+            by_title: dict[str, Any] = {str(r.request_details): r for r in existing_rows}
+            completed_set = set(state_update.get("completed_task_titles") or [])
 
-            for task_data in state_update["workflow_tasks"]:
-                if isinstance(task_data, dict):
-                    title = task_data.get("title", "Untitled")
-                    task_status = "COMPLETED" if title in completed_titles else task_data.get("status", "PENDING")
-                    if title in existing_by_title:
-                        existing_row = existing_by_title[title]
-                        existing_row.status = task_status
-                    else:
-                        new_t = Task(
-                            workflow_id=wf.id,
-                            requesting_agent_id=task_data.get("assignee_role", "dispatcher"),
-                            status=task_status,
-                            request_details=title,
-                            payload=task_data.get("description", "") or "",
-                            response=""
-                        )
-                        db.add(new_t)
-                        existing_by_title[title] = new_t
+            for task_data in (state_update.get("workflow_tasks") or []):
+                if not isinstance(task_data, dict):
+                    continue
+                title = task_data.get("title", "Untitled")
+                desired_status = "COMPLETED" if title in completed_set else task_data.get("status", "PENDING")
+                if title in by_title:
+                    if by_title[title].status != desired_status:
+                        by_title[title].status = desired_status
+                else:
+                    new_t = Task(
+                        workflow_id=wf.id,
+                        requesting_agent_id=task_data.get("assignee_role", "dispatcher"),
+                        status=desired_status,
+                        request_details=title,
+                        payload=task_data.get("description", "") or "",
+                        response=""
+                    )
+                    db.add(new_t)
+                    by_title[title] = new_t
+
+            for title in completed_set:
+                if title in by_title and by_title[title].status != "COMPLETED":
+                    by_title[title].status = "COMPLETED"
+
             await db.commit()
 
+            all_tasks_payload = [
+                {
+                    "title": r.request_details,
+                    "assignee_role": r.requesting_agent_id,
+                    "status": r.status,
+                }
+                for r in by_title.values()
+            ]
             await ws_manager.broadcast(str(project_id), "TASKS_UPDATED", {
-                "tasks": state_update["workflow_tasks"],
-                "completed_task_titles": list(completed_titles),
+                "tasks": all_tasks_payload,
+                "completed_task_titles": list(completed_set),
+                "completed_count": sum(1 for r in by_title.values() if r.status == "COMPLETED"),
+                "total_count": len(by_title),
             })
 
         # Resolve project workspace dir for scoped git diffs
@@ -466,7 +486,7 @@ class OrchestratorService:
         await ws_manager.broadcast(str(project_id), "LOG_EMITTED", {
             "agent_name": node_name,
             "message": log_msg,
-            "timestamp": str(datetime.utcnow())
+            "timestamp": str(datetime.now(timezone.utc).replace(tzinfo=None))
         })
 
         # 4. Git overall diff broadcast (non-blocking, strictly scoped to the project's git repo)

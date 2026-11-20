@@ -1,4 +1,4 @@
-from typing import List
+from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -37,26 +37,30 @@ async def respond_to_approval(
     db: AsyncSession = Depends(get_db)
 ):
     """Submit human feedback/approval decision to resume orchestrator pipeline execution."""
-    approval = await db.get(HumanApproval, approval_id)
+    approval: Any = await db.get(HumanApproval, approval_id)
     if not approval:
         raise HTTPException(status_code=404, detail="Approval request not found")
 
     if approval.status != "PENDING":
         raise HTTPException(status_code=400, detail="Approval request has already been processed")
 
-    wf = await db.get(Workflow, approval.workflow_id)
+    wf: Any = await db.get(Workflow, approval.workflow_id)
     if not wf:
         raise HTTPException(status_code=404, detail="Workflow associated with approval not found")
 
-    project = await db.get(Project, wf.project_id)
+    project: Any = await db.get(Project, wf.project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project associated with approval not found")
 
-    feedback_text = payload.resolved_feedback()
+    raw_feedback = (payload.resolved_feedback() or "").strip()
+    normalized = raw_feedback.rstrip(".!").strip().lower()
+    _APPROVAL_WORDS = {"", "approve", "approved", "yes", "ok", "okay", "lgtm", "proceed", "looks good"}
+    is_approved = normalized in _APPROVAL_WORDS
+    feedback_text = "" if is_approved else raw_feedback
 
     # Immediately mark approval as processed in DB
-    approval.status = "APPROVED" if not feedback_text or feedback_text.lower() in ["approve", "yes", "ok"] else "FEEDBACK_SUBMITTED"
-    approval.feed_back = feedback_text if feedback_text else "Approved"
+    approval.status = "APPROVED" if is_approved else "FEEDBACK_SUBMITTED"
+    approval.feed_back = raw_feedback if raw_feedback else "Approved"
 
     # If initial project description was short/greeting, update project.description in DB only when user gives a real requirement
     if project and feedback_text:
