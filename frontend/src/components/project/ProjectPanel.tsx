@@ -7,7 +7,11 @@ import { DiffViewer } from './DiffViewer';
 import { DocumentViewer } from './DocumentViewer';
 import { X, GitCompare, FileText, Code2, Files } from 'lucide-react';
 
-export function ProjectPanel() {
+interface ProjectPanelProps {
+  mode?: 'project' | 'docs';
+}
+
+export function ProjectPanel({ mode = 'project' }: ProjectPanelProps) {
   const {
     selectedFile,
     openTabs,
@@ -38,38 +42,53 @@ export function ProjectPanel() {
     }
   }, [selectedFile?.path]);
 
-  // If a document is selected, show document viewer
-  if (selectedDocument) {
+  // Dedicated Documents View when sidebar is in 'docs' mode
+  if (mode === 'docs') {
+    const activeDoc = selectedDocument || documents[0] || null;
     return (
       <div className="flex h-full bg-[var(--bg-primary)]">
         {/* Document list sidebar */}
-        <div className="w-56 border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)]">
+        <div className="w-60 border-r border-[var(--border-subtle)] bg-[var(--bg-secondary)] flex flex-col">
           <div className="panel-header">
             <div className="flex items-center gap-2">
               <FileText size={14} className="text-[var(--accent-primary)]" />
-              <span>Documents</span>
+              <span>Documents ({documents.length})</span>
             </div>
           </div>
-          <div className="p-2 space-y-1">
-            {documents.map((doc) => (
-              <button
-                key={doc.id}
-                onClick={() => selectDocument(doc)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
-                  selectedDocument.id === doc.id
-                    ? 'bg-[var(--accent-primary-glow)] text-[var(--text-primary)]'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
-                }`}
-              >
-                <div className="font-medium truncate">{doc.title}</div>
-                <div className="text-[10px] text-[var(--text-dim)] mt-0.5 uppercase">{doc.type.replace('_', ' ')}</div>
-              </button>
-            ))}
+          <div className="p-2 space-y-1 flex-1 overflow-y-auto">
+            {documents.length === 0 ? (
+              <p className="text-xs text-[var(--text-dim)] px-2 py-4">
+                No project documents generated yet. Plans, PRDs, and Design Docs will appear here.
+              </p>
+            ) : (
+              documents.map((doc) => (
+                <button
+                  key={doc.id}
+                  onClick={() => selectDocument(doc)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${
+                    activeDoc?.id === doc.id
+                      ? 'bg-[var(--accent-primary-glow)] text-[var(--text-primary)]'
+                      : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]'
+                  }`}
+                >
+                  <div className="font-medium truncate">{doc.title}</div>
+                  <div className="text-[10px] text-[var(--text-dim)] mt-0.5 uppercase">{doc.type.replace('_', ' ')}</div>
+                </button>
+              ))
+            )}
           </div>
         </div>
         {/* Document content */}
-        <div className="flex-1">
-          <DocumentViewer document={selectedDocument} />
+        <div className="flex-1 overflow-hidden">
+          {activeDoc ? (
+            <DocumentViewer document={activeDoc} />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-[var(--text-dim)]">
+              <FileText size={32} className="mb-3 opacity-30" />
+              <p className="text-sm">No documents available yet</p>
+              <p className="text-xs mt-1">Start a project to generate Plans, PRDs, and Architecture Docs</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -154,7 +173,12 @@ export function ProjectPanel() {
 
             {/* Toggle diff view button */}
             <button
-              onClick={toggleDiffView}
+              onClick={() => {
+                if (!showDiff && !selectedDiff && diffs.length > 0) {
+                  selectDiff(diffs[0]);
+                }
+                toggleDiffView();
+              }}
               className={`ml-auto px-2 py-1 mx-1 rounded text-xs transition-colors flex items-center gap-1 ${
                 showDiff
                   ? 'bg-[var(--state-drafting-bg)] text-[var(--state-drafting)]'
@@ -162,15 +186,23 @@ export function ProjectPanel() {
               }`}
             >
               <GitCompare size={12} />
-              Diff
+              Diff{diffs.length > 0 ? ` (${diffs.length})` : ''}
             </button>
           </div>
         )}
 
         {/* Content */}
         <div className="flex-1 overflow-hidden">
-          {showDiff && selectedDiff ? (
-            <DiffViewer diff={selectedDiff} />
+          {showDiff ? (
+            selectedDiff ? (
+              <DiffViewer diff={selectedDiff} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-[var(--text-dim)]">
+                <GitCompare size={32} className="mb-3 opacity-30" />
+                <p className="text-sm">No git diffs recorded yet</p>
+                <p className="text-xs mt-1">File changes committed or modified by agents will appear here</p>
+              </div>
+            )
           ) : selectedFile ? (
             <CodeViewer
               code={selectedFile.content !== undefined ? selectedFile.content : '// Loading file content...'}

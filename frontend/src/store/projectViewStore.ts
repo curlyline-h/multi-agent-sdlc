@@ -25,6 +25,8 @@ interface ProjectViewState {
   selectDiff: (diff: FileDiff | null) => void;
   setDocuments: (docs: ProjectDocument[]) => void;
   selectDocument: (doc: ProjectDocument | null) => void;
+  updateFileContent: (path: string, content: string) => void;
+  resetAll: () => void;
 }
 
 export const useProjectViewStore = create<ProjectViewState>((set) => ({
@@ -81,4 +83,29 @@ export const useProjectViewStore = create<ProjectViewState>((set) => ({
   selectDiff: (diff) => set({ selectedDiff: diff }),
   setDocuments: (docs) => set({ documents: docs }),
   selectDocument: (doc) => set({ selectedDocument: doc }),
+  updateFileContent: (path, content) =>
+    set((state) => {
+      const matches = (p: string) => p === path || p.endsWith(`/${path}`) || path.endsWith(`/${p}`);
+      return {
+        openTabs: state.openTabs.map((t) =>
+          matches(t.path) ? { ...t, content, isModified: true } : t
+        ),
+        selectedFile:
+          state.selectedFile && matches(state.selectedFile.path)
+            ? { ...state.selectedFile, content, isModified: true }
+            : state.selectedFile,
+      };
+    }),
+  resetAll: () =>
+    set({
+      fileTree: [],
+      selectedFile: null,
+      openTabs: [],
+      activeTabPath: null,
+      showDiff: false,
+      diffs: [],
+      selectedDiff: null,
+      documents: [],
+      selectedDocument: null,
+    }),
 }));

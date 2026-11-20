@@ -53,6 +53,7 @@ export async function respondToApproval(approvalId: string, feedback: string = '
     method: 'POST',
     body: JSON.stringify({
       status: feedback.trim() ? 'FEEDBACK_SUBMITTED' : 'APPROVED',
+      feedback,
       feed_back: feedback,
     }),
   });
@@ -101,6 +102,30 @@ export async function getProjectLogs(projectId: string): Promise<any[]> {
 export async function getProjectTerminalLogs(projectId: string): Promise<any[]> {
   try {
     return await apiFetch(`/terminal/project/${projectId}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function getProjectDocuments(projectId: string): Promise<any[]> {
+  try {
+    return await apiFetch(`/documents/project/${projectId}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function getProjectGitDiff(projectId: string): Promise<{ diff: string }> {
+  try {
+    return await apiFetch(`/files/git-diff?project_id=${encodeURIComponent(projectId)}`);
+  } catch {
+    return { diff: '' };
+  }
+}
+
+export async function getProjectFileRecords(projectId: string): Promise<any[]> {
+  try {
+    return await apiFetch(`/files/records/project/${projectId}`);
   } catch {
     return [];
   }

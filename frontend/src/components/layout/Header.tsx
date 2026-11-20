@@ -28,7 +28,10 @@ export function Header() {
       }
     };
     refresh();
-    const timer = setInterval(refresh, 10000);
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      refresh();
+    }, 15000);
     return () => clearInterval(timer);
   }, []);
 
@@ -44,13 +47,11 @@ export function Header() {
       createdAt: new Date().toISOString(),
       currentPhase: phaseLabel,
       currentPhaseIndex: 0,
-      totalPhases: 6,
+      totalPhases: PIPELINE_PHASES.length,
     };
     setCurrentWorkflow(resetWorkflow);
     setActiveSubgraph(null);
-    useProjectViewStore.getState().setFileTree([]);
-    useProjectViewStore.getState().setDiffs([]);
-    useProjectViewStore.getState().setDocuments([]);
+    useProjectViewStore.getState().resetAll();
     useTerminalStore.getState().clearSession('agent-terminal');
   };
 

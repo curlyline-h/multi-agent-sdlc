@@ -22,7 +22,7 @@ export default function DashboardPage() {
       createdAt: new Date().toISOString(),
       currentPhase: 'Ready for Prompt',
       currentPhaseIndex: 0,
-      totalPhases: 6,
+      totalPhases: PARENT_GRAPH_NODES.length,
     };
     useWorkflowStore.getState().setCurrentWorkflow(initialWorkflow);
 

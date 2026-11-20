@@ -1,7 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useLayoutStore, ViewMode } from '@/store/layoutStore';
+import { useChatStore } from '@/store/chatStore';
 import {
   MessageSquare,
   GitBranch,
@@ -32,12 +33,21 @@ const bottomItems: SidebarItem[] = [
 
 export function Sidebar() {
   const { viewMode, setViewMode, toggleTerminal, isTerminalVisible } = useLayoutStore();
+  const { isConnected } = useChatStore();
+  const [showSettings, setShowSettings] = useState(false);
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const activeProjectId =
+    typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') || 'None' : 'None';
 
   const handleClick = (item: SidebarItem) => {
     if (item.isView) {
       setViewMode(item.id as ViewMode);
+      setShowSettings(false);
     } else if (item.id === 'terminal-toggle') {
       toggleTerminal();
+    } else if (item.id === 'settings') {
+      setShowSettings((prev) => !prev);
     }
   };
 
@@ -77,7 +87,10 @@ export function Sidebar() {
             <button
               onClick={() => handleClick(item)}
               className={`sidebar-icon ${
-                item.id === 'terminal-toggle' && isTerminalVisible ? 'sidebar-icon-active' : ''
+                (item.id === 'terminal-toggle' && isTerminalVisible) ||
+                (item.id === 'settings' && showSettings)
+                  ? 'sidebar-icon-active'
+                  : ''
               }`}
             >
               {item.icon}
@@ -88,6 +101,37 @@ export function Sidebar() {
           </div>
         ))}
       </div>
+
+      {/* Settings Popover */}
+      {showSettings && (
+        <div className="fixed left-[calc(var(--sidebar-width)+8px)] bottom-3 w-72 bg-[var(--bg-elevated)] border border-[var(--border-subtle)] rounded-lg shadow-2xl p-3 z-50 text-xs">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-semibold text-[var(--text-primary)]">Runtime Settings</span>
+            <button
+              onClick={() => setShowSettings(false)}
+              className="text-[var(--text-dim)] hover:text-[var(--text-primary)]"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="space-y-1.5 text-[var(--text-secondary)]">
+            <div className="flex justify-between gap-2">
+              <span className="text-[var(--text-dim)]">Backend API:</span>
+              <span className="font-mono truncate">{apiUrl}</span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-[var(--text-dim)]">WebSocket:</span>
+              <span className={isConnected ? 'text-[var(--state-completed)]' : 'text-[var(--state-error)]'}>
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </span>
+            </div>
+            <div className="flex justify-between gap-2">
+              <span className="text-[var(--text-dim)]">Active Project:</span>
+              <span className="font-mono">#{activeProjectId}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   );
 }

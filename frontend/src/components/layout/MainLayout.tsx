@@ -88,7 +88,7 @@ export function MainLayout() {
           {viewMode === 'project' && (
             <div className="flex-1 flex flex-col">
               <div className="flex-1 overflow-hidden">
-                <ProjectPanel />
+                <ProjectPanel mode="project" />
               </div>
               {isTerminalVisible && <TerminalPanel />}
             </div>
@@ -98,7 +98,7 @@ export function MainLayout() {
           {viewMode === 'docs' && (
             <div className="flex-1 flex flex-col">
               <div className="flex-1 overflow-hidden">
-                <ProjectPanel />
+                <ProjectPanel mode="docs" />
               </div>
               {isTerminalVisible && <TerminalPanel />}
             </div>
