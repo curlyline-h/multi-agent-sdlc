@@ -122,6 +122,11 @@ def run_unit_tests(test_file_path: str) -> str:
         return f"TESTS_FAILED: '{cmd}' timed out after 120s."
     if rc == 0:
         return "TESTS_PASSED"
+    if stack == "python" and rc == 5:
+        return (
+            "TESTS_FAILED: pytest collected 0 items (no tests found). "
+            "You MUST write real pytest unit tests under tests/ or backend/tests/ before finishing."
+        )
     errors = (stdout or "") + ("\n" + stderr if stderr else "")
     return f"TESTS_FAILED:\n{errors.strip()[-2000:]}"
 

@@ -189,14 +189,27 @@ def approve_deployment_node(state: DevOpsState) -> dict:
     """
     Interrupts the graph to present the deployment scripts to the user before
     any physical infrastructure is provisioned or containers are started.
+    Warns explicitly if the project build is currently failing.
     """
+    from agents.src.shared.verifier import verify_project_build
+
+    build_ok, build_errors = verify_project_build(label="DevOps-Gate")
+    warning_banner = ""
+    if not build_ok:
+        warning_banner = (
+            "\n\n⚠️ **WARNING: Project build/compile verification FAILED:**\n"
+            f"```\n{build_errors[:1200]}\n```\n"
+            "You may want to reject deployment until the build errors are resolved."
+        )
+
     user_response = interrupt({
         "type": "deployment_approval",
-        "plan": state.deployment_plan,
+        "plan": state.deployment_plan + warning_banner,
         "message": (
             "CRITICAL: The DevOps Agent is ready to deploy your application. "
             "Please review the deployment plan (Docker/Terraform scripts). "
             "Approve to proceed with actual deployment, or provide feedback."
+            + warning_banner
         )
     })
     
