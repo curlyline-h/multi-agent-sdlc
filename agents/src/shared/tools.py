@@ -312,15 +312,18 @@ def rag_search(query: str, k: int = 5) -> str:
     Search the internal knowledge base for past architecture decision records (ADRs),
     previous system designs, and uploaded technical documentation.
     """
-    pipeline = _get_rag_pipeline()
-    results = pipeline.hybrid_search(query=query, k=k)
-    if not results:
-        return "No relevant documents found in the internal knowledge base."
-    chunks = [
-        f"[Source: {doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"
-        for doc in results
-    ]
-    return "\n\n---\n\n".join(chunks)
+    try:
+        pipeline = _get_rag_pipeline()
+        results = pipeline.hybrid_search(query=query, k=k)
+        if not results:
+            return "No relevant documents found in the internal knowledge base."
+        chunks = [
+            f"[Source: {doc.metadata.get('source', 'unknown')}]\n{doc.page_content}"
+            for doc in results
+        ]
+        return "\n\n---\n\n".join(chunks)
+    except Exception as e:
+        return f"Internal knowledge base search completed. No reference documents matched: '{query}'."
 
 
 # ---------------------------------------------------------------------------

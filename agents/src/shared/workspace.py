@@ -7,6 +7,7 @@ mix with the parent ``sdlc`` repository or with other generated projects.
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import re
 import threading
@@ -19,6 +20,7 @@ ENV_PROJECT_DIR_KEY = "SDLC_PROJECT_OUTPUT_DIR"
 
 _LOCK = threading.Lock()
 _ACTIVE_OUTPUT_DIR: Optional[Path] = None
+_CTX_OUTPUT_DIR: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar("SDLC_CTX_OUTPUT_DIR", default=None)
 
 _STOP_WORDS = {
     "i", "want", "you", "to", "a", "an", "the", "create", "build", "make",
@@ -75,23 +77,27 @@ def set_active_project_dir(
             resolved.mkdir(parents=True, exist_ok=True)
 
         _ACTIVE_OUTPUT_DIR = resolved
+        _CTX_OUTPUT_DIR.set(resolved)
         os.environ[ENV_PROJECT_DIR_KEY] = str(resolved)
         return resolved
 
 
 def get_output_dir(ensure_exists: bool = True) -> Path:
     """
-    Returns the active project workspace directory.
-    Falls back to ``ROOT_DIR / 'output'`` only when no project workspace has
-    been initialized (e.g. standalone unit tests).
+    Returns the active project workspace directory (preferring per-task ContextVar
+    for concurrency safety, falling back to env/global only outside a task context).
     """
-    env_val = os.environ.get(ENV_PROJECT_DIR_KEY, "").strip()
-    if env_val:
-        path = Path(env_val)
-    elif _ACTIVE_OUTPUT_DIR is not None:
-        path = _ACTIVE_OUTPUT_DIR
+    ctx_dir = _CTX_OUTPUT_DIR.get()
+    if ctx_dir is not None:
+        path = ctx_dir
     else:
-        path = ROOT_DIR / "output"
+        env_val = os.environ.get(ENV_PROJECT_DIR_KEY, "").strip()
+        if env_val:
+            path = Path(env_val)
+        elif _ACTIVE_OUTPUT_DIR is not None:
+            path = _ACTIVE_OUTPUT_DIR
+        else:
+            path = ROOT_DIR / "output"
 
     if ensure_exists:
         path.mkdir(parents=True, exist_ok=True)
