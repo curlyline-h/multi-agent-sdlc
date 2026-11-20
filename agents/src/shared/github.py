@@ -326,8 +326,8 @@ blob-report/
         f"git checkout -b {branch_name}",
         "git add .",
         f'git commit -m "{commit_message}" --allow-empty',
-        # Push feature branch. This commit will only contain the diff against the remote main branch!
-        f"git push -u -f {auth_url} {branch_name}",
+        # Push feature branch without force-pushing
+        f"git push -u {auth_url} {branch_name}",
     ]
 
     for cmd in git_commands:
@@ -343,11 +343,13 @@ blob-report/
                 errors="replace",
                 check=True,
             )
-            stdout = result.stdout.strip()
+            stdout = (result.stdout or "").replace(github_token, "***").strip()
             print(f"[{agent_name}] ✓ {safe_cmd}" + (f"\n    {stdout}" if stdout else ""))
         except subprocess.CalledProcessError as e:
-            safe_err = e.stderr.replace(github_token, "***").strip()
-            print(f"[{agent_name}] ✗ {safe_cmd}: {safe_err}")
+            safe_err = (e.stderr or "").replace(github_token, "***").strip()
+            safe_out = (e.stdout or "").replace(github_token, "***").strip()
+            detail = safe_err or safe_out
+            print(f"[{agent_name}] ✗ {safe_cmd}: {detail}")
 
     # ── Step 5: Create Pull Request with rich description ────────
     print(f"\n[{agent_name}] Creating descriptive Pull Request...")

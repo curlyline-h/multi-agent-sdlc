@@ -25,7 +25,8 @@ _CTX_OUTPUT_DIR: contextvars.ContextVar[Optional[Path]] = contextvars.ContextVar
 _STOP_WORDS = {
     "i", "want", "you", "to", "a", "an", "the", "create", "build", "make",
     "develop", "design", "generate", "write", "for", "me", "please", "with",
-    "using", "and", "or", "of", "in", "on", "app", "application", "system",
+    "using", "and", "or", "of", "in", "on", "where", "users", "user", "can",
+    "their", "own", "that", "which", "who",
 }
 
 
@@ -35,7 +36,7 @@ def slugify_project_name(name_or_req: str) -> str:
     if not raw:
         return "project"
 
-    # Keep short explicit slugs readable (e.g. "proj-todo-app" or "todo-app")
+    raw = re.sub(r"\bto-do\b", "todo", raw)
     cleaned = re.sub(r"[^a-z0-9\s-]", " ", raw)
     tokens = [t for t in re.split(r"[\s-]+", cleaned) if t]
     meaningful = [t for t in tokens if t not in _STOP_WORDS]
