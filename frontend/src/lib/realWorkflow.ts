@@ -3,10 +3,23 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { useProjectViewStore } from '@/store/projectViewStore';
 import { useTerminalStore } from '@/store/terminalStore';
 import { useLayoutStore } from '@/store/layoutStore';
-import { PIPELINE_PHASES } from '@/lib/graphData';
-import { getFileTree, getProject, getProjectApprovals, getProjectLogs, getProjectTerminalLogs, getProjectWorkflow } from '@/lib/api';
+import { PIPELINE_PHASES, buildSubgraphDefinition } from '@/lib/graphData';
+import {
+  getFileContent,
+  getFileTree,
+  getProject,
+  getProjectApprovals,
+  getProjectDocuments,
+  getProjectFileRecords,
+  getProjectGitDiff,
+  getProjectLogs,
+  getProjectTerminalLogs,
+  getProjectWorkflow,
+} from '@/lib/api';
 import { TerminalLine } from '@/types/terminal';
 import { ApprovalRequest } from '@/types/chat';
+import { FileDiff } from '@/types/project';
+import { AgentRole } from '@/types/agent';
 
 const WS_BASE = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/^http/, 'ws');
 const DEFAULT_TERMINAL_ID = 'agent-terminal';
@@ -26,6 +39,95 @@ function clearTimers() {
     clearInterval(pingTimer);
     pingTimer = null;
   }
+}
+
+function stageToAgentRole(stageOrRole?: string): AgentRole | null {
+  if (!stageOrRole) return null;
+  const s = stageOrRole.toLowerCase();
+  if (s.includes('plan')) return 'planner';
+  if (s.includes('pm_') || s.includes('product')) return 'product_manager';
+  if (s.includes('architect')) return 'architect';
+  if (s.includes('task_breakdown')) return 'task_breakdown';
+  if (s.includes('database')) return 'database_engineer';
+  if (s.includes('backend')) return 'backend_dev';
+  if (s.includes('frontend')) return 'frontend_dev';
+  if (s.includes('qa')) return 'qa';
+  if (s.includes('review')) return 'reviewer';
+  if (s.includes('security')) return 'security';
+  if (s.includes('devops')) return 'devops';
+  if (s.includes('dispatch') || s.includes('orchestr')) return 'dispatcher';
+  return null;
+}
+
+function parseUnifiedDiff(rawDiff: string): FileDiff[] {
+  if (!rawDiff || !rawDiff.trim()) return [];
+  const blocks = rawDiff.split(/^diff --git /m).filter((b) => b.trim());
+  const parsed: FileDiff[] = [];
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/);
+    const header = lines[0] || '';
+    const pathMatch = header.match(/b\/(.+)$/);
+    const path = pathMatch ? pathMatch[1].trim() : header.split(' ')[0] || 'unknown';
+    const oldLines: string[] = [];
+    const newLines: string[] = [];
+    let additions = 0;
+    let deletions = 0;
+    let status: FileDiff['status'] = 'modified';
+    for (const line of lines.slice(1)) {
+      if (line.startsWith('new file mode')) {
+        status = 'added';
+      } else if (line.startsWith('deleted file mode')) {
+        status = 'deleted';
+      } else if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@') || line.startsWith('index ')) {
+        continue;
+      } else if (line.startsWith('+')) {
+        newLines.push(line.slice(1));
+        additions += 1;
+      } else if (line.startsWith('-')) {
+        oldLines.push(line.slice(1));
+        deletions += 1;
+      } else if (line.startsWith(' ')) {
+        const txt = line.slice(1);
+        oldLines.push(txt);
+        newLines.push(txt);
+      }
+    }
+    parsed.push({
+      path,
+      oldContent: oldLines.join('\n'),
+      newContent: newLines.join('\n'),
+      additions,
+      deletions,
+      status,
+    });
+  }
+  return parsed;
+}
+
+function recordsToDiffs(records: any[]): FileDiff[] {
+  if (!Array.isArray(records) || records.length === 0) return [];
+  const seen = new Set<string>();
+  const out: FileDiff[] = [];
+  for (const rec of records) {
+    const path = String(rec.file_path || '');
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const parsed = rec.diff_snapshot ? parseUnifiedDiff(rec.diff_snapshot) : [];
+    if (parsed.length > 0) {
+      out.push(parsed[0]);
+    } else {
+      const action = String(rec.action || 'MODIFIED').toUpperCase();
+      out.push({
+        path,
+        oldContent: '',
+        newContent: String(rec.content_snapshot || rec.diff_snapshot || `// ${action}: ${path}`),
+        additions: action === 'CREATED' ? 1 : 0,
+        deletions: action === 'DELETED' ? 1 : 0,
+        status: action === 'CREATED' ? 'added' : action === 'DELETED' ? 'deleted' : 'modified',
+      });
+    }
+  }
+  return out;
 }
 
 function buildApprovalRequest(raw: any): ApprovalRequest {
@@ -127,6 +229,29 @@ function appendTerminalCommand(data: Record<string, any>) {
   }
 }
 
+function activateStageVisuals(stageId: string, subNode?: string) {
+  const wfStore = useWorkflowStore.getState();
+  const chatStore = useChatStore.getState();
+
+  const existingSub = wfStore.activeSubgraph;
+  if (!existingSub || existingSub.id !== stageId) {
+    const def = buildSubgraphDefinition(stageId);
+    wfStore.setActiveSubgraph(def);
+  }
+  if (subNode) {
+    wfStore.setSubgraphActiveNode(subNode);
+  }
+
+  const role = stageToAgentRole(stageId);
+  if (role) {
+    chatStore.setActiveAgent(role);
+    chatStore.setActiveAgentState('executing');
+    if (subNode) {
+      chatStore.setActiveAgentNode(subNode);
+    }
+  }
+}
+
 export function disconnectRealWorkflow() {
   shouldReconnect = false;
   activeProjectRef = null;
@@ -150,6 +275,30 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
   if (typeof window !== 'undefined' && projectId && projectId !== 'live-sdlc-project') {
     localStorage.setItem('activeProjectId', projectId);
   }
+
+  const refreshDocuments = () => {
+    if (!projectId || projectId === 'live-sdlc-project' || projectId === 'new-project') return;
+    getProjectDocuments(projectId)
+      .then((docs) => {
+        if (Array.isArray(docs)) {
+          useProjectViewStore.getState().setDocuments(docs);
+        }
+      })
+      .catch(() => {});
+  };
+
+  const refreshDiffs = () => {
+    if (!projectId || projectId === 'live-sdlc-project' || projectId === 'new-project') return;
+    Promise.all([getProjectGitDiff(projectId), getProjectFileRecords(projectId)])
+      .then(([gitRes, records]) => {
+        const parsed = parseUnifiedDiff(gitRes?.diff || '');
+        const diffs = parsed.length > 0 ? parsed : recordsToDiffs(records);
+        if (diffs.length > 0) {
+          useProjectViewStore.getState().setDiffs(diffs);
+        }
+      })
+      .catch(() => {});
+  };
 
   const hydrateState = () => {
     if (projectId && projectId !== 'live-sdlc-project' && projectId !== 'new-project') {
@@ -186,6 +335,7 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           .catch(() => {});
       }
 
+      // Single canonical pending-approval hydration
       getProjectApprovals(projectId)
         .then((approvals) => {
           if (!Array.isArray(approvals)) return;
@@ -194,6 +344,7 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           if (pending) {
             const req = buildApprovalRequest(pending);
             chat.setPendingApproval(req);
+            chat.setActiveAgentState('awaiting_approval');
             const alreadyShown = chat.messages.some((m) => m.approval?.id === req.id);
             if (!alreadyShown) {
               chat.addMessage({
@@ -224,9 +375,9 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
       getProjectWorkflow(projectId)
         .then((wf) => {
           const store = useWorkflowStore.getState();
+          const chat = useChatStore.getState();
           if (!wf) return;
 
-          // Restore completed nodes
           try {
             const done = JSON.parse(wf.completed_nodes || '[]');
             if (Array.isArray(done)) {
@@ -243,17 +394,26 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           if (wf.current_state && wf.current_state !== 'START') {
             if (wf.current_state === 'COMPLETED' || wf.status === 'COMPLETED') {
               store.completeNode(wf.current_state);
+              store.setActiveSubgraph(null);
               store.updatePhase('COMPLETED', PIPELINE_PHASES.length, PIPELINE_PHASES.length);
+              chat.setActiveAgentState('completed');
             } else if (wf.status === 'FAILED') {
               store.setNodeStatus(wf.current_state, 'failed');
               store.updatePhase('Failed', store.currentWorkflow?.currentPhaseIndex || 0, PIPELINE_PHASES.length);
+              chat.setActiveAgentState('error');
             } else if (wf.status === 'STOPPED' || wf.status === 'PAUSED') {
               store.setNodeStatus(wf.current_state, 'pending');
+              store.setActiveSubgraph(null);
               store.updatePhase('Stopped', store.currentWorkflow?.currentPhaseIndex || 0, PIPELINE_PHASES.length);
+              chat.setActiveAgentState('idle');
             } else if (wf.status === 'RUNNING' || wf.status === 'AWAITING_APPROVAL') {
               store.setActiveNode(wf.current_state);
               const idx = PIPELINE_PHASES.indexOf(wf.current_state);
               store.updatePhase(wf.current_state, idx >= 0 ? idx + 1 : 1, PIPELINE_PHASES.length);
+              activateStageVisuals(wf.current_state, wf.current_subgraph_node || undefined);
+              if (wf.status === 'AWAITING_APPROVAL') {
+                chat.setActiveAgentState('awaiting_approval');
+              }
             } else {
               store.updatePhase(wf.current_state, 0, PIPELINE_PHASES.length);
             }
@@ -263,33 +423,8 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
         })
         .catch(() => {});
 
-      getProjectApprovals(projectId)
-        .then((approvals) => {
-          const pending = approvals.find((a: any) => a.status === 'PENDING');
-          if (pending) {
-            let parsedQuestions: any[] = [];
-            let draftText = pending.payload || '';
-            try {
-              const maybeArr = JSON.parse(pending.payload || '');
-              if (Array.isArray(maybeArr)) {
-                parsedQuestions = maybeArr;
-                draftText = '';
-              }
-            } catch {
-              // payload is markdown/text draft
-            }
-            useChatStore.getState().setPendingApproval({
-              id: String(pending.id),
-              type: parsedQuestions.length > 0 ? 'clarification' : 'general',
-              title: pending.request_details || 'Approval Required',
-              message: pending.request_details || '',
-              draft: draftText,
-              questions: parsedQuestions,
-              status: 'pending',
-            } as any);
-          }
-        })
-        .catch(() => {});
+      refreshDocuments();
+      refreshDiffs();
     }
 
     getFileTree(projectId)
@@ -346,7 +481,6 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
     };
 
     ws.onerror = () => {
-      // Let onclose trigger reconnect cleanly
       useChatStore.getState().setConnected(false);
     };
 
@@ -364,6 +498,7 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           const req = buildApprovalRequest(data);
           const chat = useChatStore.getState();
           chat.setPendingApproval(req);
+          chat.setActiveAgentState('awaiting_approval');
           const alreadyShown = chat.messages.some((m) => m.approval?.id === req.id);
           if (!alreadyShown) {
             chat.addMessage({
@@ -375,6 +510,7 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
               timestamp: Date.now(),
             } as any);
           }
+          refreshDocuments();
           return;
         }
 
@@ -397,48 +533,47 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           }
         } else if (eventType === 'STAGE_CHANGED' && data.stage) {
           const wfStore = useWorkflowStore.getState();
+          const chatStore = useChatStore.getState();
           if (data.stage === 'COMPLETED') {
             if (wfStore.currentWorkflow?.activeNodeId) {
               wfStore.completeNode(wfStore.currentWorkflow.activeNodeId);
             }
+            wfStore.setActiveSubgraph(null);
             wfStore.updatePhase('COMPLETED', PIPELINE_PHASES.length, PIPELINE_PHASES.length);
+            chatStore.setActiveAgentState('completed');
+            chatStore.setActiveAgentNode(null);
+            refreshDocuments();
+            refreshDiffs();
           } else if (data.stage === 'STOPPED' || data.state === 'STOPPED') {
             if (wfStore.currentWorkflow?.activeNodeId) {
               wfStore.setNodeStatus(wfStore.currentWorkflow.activeNodeId, 'pending');
             }
+            wfStore.setActiveSubgraph(null);
             wfStore.updatePhase('Stopped', wfStore.currentWorkflow?.currentPhaseIndex || 0, PIPELINE_PHASES.length);
+            chatStore.setActiveAgentState('idle');
+            chatStore.setActiveAgentNode(null);
           } else {
             wfStore.setActiveNode(data.stage);
             const idx = PIPELINE_PHASES.indexOf(data.stage);
             if (idx >= 0) {
               wfStore.updatePhase(data.stage, idx + 1, PIPELINE_PHASES.length);
             }
+            activateStageVisuals(data.stage);
+            refreshDocuments();
           }
         } else if (eventType === 'SUBGRAPH_NODE_CHANGED') {
           const wfStore = useWorkflowStore.getState();
-          if (data.parent_stage) {
-            wfStore.setActiveNode(data.parent_stage);
-          }
-          if (data.sub_node) {
+          const stageId = data.parent_stage || wfStore.currentWorkflow?.activeNodeId;
+          if (stageId) {
+            wfStore.setActiveNode(stageId);
+            activateStageVisuals(stageId, data.sub_node);
+          } else if (data.sub_node) {
             wfStore.setSubgraphActiveNode(data.sub_node);
+            useChatStore.getState().setActiveAgentNode(data.sub_node);
           }
-        } else if (eventType === 'NODE_STARTED' && data.node) {
-          useWorkflowStore.getState().setActiveNode(data.node);
-        } else if (eventType === 'NODE_COMPLETED' && data.node) {
-          useWorkflowStore.getState().completeNode(data.node);
-        } else if (eventType === 'HUMAN_INTERRUPT' || eventType === 'APPROVAL_REQUIRED') {
-          useChatStore.getState().setPendingApproval({
-            id: String(data.approval_id || data.id || Date.now()),
-            type: data.type || 'general',
-            title: data.section || data.title || 'Approval Required',
-            message: data.message || data.section || '',
-            draft: data.draft || data.content || '',
-            questions: data.questions || [],
-            status: 'pending',
-          } as any);
         } else if (eventType === 'TERMINAL_COMMAND') {
           appendTerminalCommand(data);
-        } else if (eventType === 'FILE_CHANGE' || eventType === 'FILE_UPDATED') {
+        } else if (eventType === 'FILE_CHANGE') {
           getFileTree(projectId)
             .then((tree) => {
               if (Array.isArray(tree)) {
@@ -446,7 +581,43 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
               }
             })
             .catch(() => {});
+
+          // Auto-refresh content if the modified file is currently open in a tab
+          if (data.path) {
+            const pv = useProjectViewStore.getState();
+            const isOpen = pv.openTabs.some(
+              (t) => t.path === data.path || t.path.endsWith(`/${data.path}`) || String(data.path).endsWith(`/${t.path}`)
+            );
+            if (isOpen) {
+              getFileContent(data.path, projectId)
+                .then((res) => {
+                  if (res && res.content !== undefined) {
+                    useProjectViewStore.getState().updateFileContent(data.path, res.content);
+                  }
+                })
+                .catch(() => {});
+            }
+            if (String(data.path).endsWith('.md')) {
+              refreshDocuments();
+            }
+          }
+          refreshDiffs();
+        } else if (eventType === 'GIT_DIFF' && typeof data.diff === 'string') {
+          const parsed = parseUnifiedDiff(data.diff);
+          if (parsed.length > 0) {
+            useProjectViewStore.getState().setDiffs(parsed);
+          }
+        } else if (eventType === 'TASKS_UPDATED' && Array.isArray(data.tasks)) {
+          const doneCount = Array.isArray(data.completed_task_titles) ? data.completed_task_titles.length : 0;
+          ensureTerminalSession();
+          useTerminalStore.getState().addLine(DEFAULT_TERMINAL_ID, {
+            id: `tasks-${Date.now()}`,
+            content: `[dispatcher] Task board synced: ${doneCount}/${data.tasks.length} completed`,
+            type: 'info',
+            timestamp: Date.now(),
+          });
         } else if (eventType === 'ERROR' && data.message) {
+          useChatStore.getState().setActiveAgentState('error');
           useChatStore.getState().addMessage({
             id: `err-${Date.now()}`,
             role: 'agent',

@@ -13,8 +13,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '@/store/workflowStore';
-import { PARENT_GRAPH_NODES, PARENT_GRAPH_EDGES } from '@/lib/graphData';
-import { GitBranch, Layers } from 'lucide-react';
+import { PARENT_GRAPH_NODES, PARENT_GRAPH_EDGES, buildSubgraphDefinition } from '@/lib/graphData';
+import { GitBranch, Layers, X } from 'lucide-react';
 
 // ── Custom node styles based on status ──────────────────────────────────
 function getNodeStyle(status: string, nodeColor?: string) {
@@ -74,7 +74,7 @@ interface GraphViewProps {
 }
 
 export function GraphView({ type }: GraphViewProps) {
-  const { currentWorkflow, activeSubgraph } = useWorkflowStore();
+  const { currentWorkflow, activeSubgraph, setActiveSubgraph } = useWorkflowStore();
 
   const sourceNodes = type === 'parent'
     ? (currentWorkflow?.nodes || PARENT_GRAPH_NODES)
@@ -97,7 +97,10 @@ export function GraphView({ type }: GraphViewProps) {
         return {
           id: n.id,
           position: n.position || { x: 0, y: 0 },
+          initialWidth: 140,
+          initialHeight: 38,
           data: {
+            status: effectiveStatus,
             label: (
               <div className="flex items-center gap-1.5 justify-center">
                 {effectiveStatus === 'completed' && <span className="text-xs">✅</span>}
@@ -179,6 +182,14 @@ export function GraphView({ type }: GraphViewProps) {
         panOnScroll={true}
         minZoom={0.3}
         maxZoom={1.5}
+        onNodeClick={(_, node) => {
+          if (type === 'parent') {
+            const sub = buildSubgraphDefinition(node.id);
+            if (sub) {
+              setActiveSubgraph(sub);
+            }
+          }
+        }}
       >
         <Background
           variant={BackgroundVariant.Dots}
@@ -194,11 +205,29 @@ export function GraphView({ type }: GraphViewProps) {
         />
         {type === 'parent' && (
           <MiniMap
+            pannable
+            zoomable
+            nodeBorderRadius={4}
+            nodeStrokeWidth={2}
+            bgColor="#111114"
+            maskColor="rgba(5, 5, 8, 0.65)"
+            maskStrokeColor="#6366f1"
+            maskStrokeWidth={1.5}
+            style={{ width: 170, height: 110, cursor: 'grab' }}
             nodeColor={(node) => {
-              const style = node.style as Record<string, string> | undefined;
-              return style?.borderColor || 'var(--border-default)';
+              const status = (node.data as Record<string, string> | undefined)?.status;
+              if (status === 'completed') return '#10b981';
+              if (status === 'running' || status === 'interrupted') return '#f59e0b';
+              if (status === 'failed') return '#ef4444';
+              return '#52525b';
             }}
-            maskColor="rgba(10, 10, 12, 0.8)"
+            nodeStrokeColor={(node) => {
+              const status = (node.data as Record<string, string> | undefined)?.status;
+              if (status === 'completed') return '#34d399';
+              if (status === 'running' || status === 'interrupted') return '#fbbf24';
+              if (status === 'failed') return '#f87171';
+              return '#71717a';
+            }}
             position="top-right"
           />
         )}
@@ -212,7 +241,7 @@ export function GraphView({ type }: GraphViewProps) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function GraphPanel() {
-  const { activeSubgraph, currentWorkflow } = useWorkflowStore();
+  const { activeSubgraph, currentWorkflow, setActiveSubgraph } = useWorkflowStore();
 
   return (
     <div className="flex flex-col h-full bg-[var(--bg-primary)]">
@@ -244,9 +273,18 @@ export function GraphPanel() {
                 <Layers size={14} className="text-[var(--node-planning)]" />
                 <span>{activeSubgraph.label}</span>
               </div>
-              <span className="text-[10px] text-[var(--text-dim)] font-mono">
-                subgraph
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-[var(--text-dim)] font-mono">
+                  subgraph
+                </span>
+                <button
+                  onClick={() => setActiveSubgraph(null)}
+                  title="Close subgraph view"
+                  className="text-[var(--text-dim)] hover:text-[var(--text-primary)] rounded p-0.5 transition-colors"
+                >
+                  <X size={12} />
+                </button>
+              </div>
             </div>
             <div className="h-[calc(100%-33px)]">
               <GraphView type="subgraph" />
