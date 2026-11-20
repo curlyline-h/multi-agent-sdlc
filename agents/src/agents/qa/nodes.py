@@ -17,8 +17,10 @@ from typing import Dict, Any, List
 
 from agents.src.agents.qa.state import QAState
 from agents.src.agents.qa.tools import (
+    api_integration_tester,
     run_test_suite,
     generate_bug_report,
+    visual_browser_tester,
     run_terminal_command,
 )
 from agents.src.shared.tools import (
@@ -119,7 +121,20 @@ def generate_tests_node(state: QAState) -> dict:
         existing_code=existing_code
     )
     
-    tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, run_test_suite, generate_bug_report]
+    tools_list = [
+        run_terminal_command,
+        semantic_code_search,
+        read_file_range,
+        replace_file_content,
+        list_directory,
+        fetch_server_logs,
+        search_web,
+        rag_search,
+        run_test_suite,
+        api_integration_tester,
+        visual_browser_tester,
+        generate_bug_report,
+    ]
     messages: list[Any] = [
         SystemMessage(content="You are a QA Automation Engineer."),
         HumanMessage(content=formatted)

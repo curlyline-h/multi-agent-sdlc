@@ -125,23 +125,45 @@ def generate_bug_report(title: str, steps: str, expected: str, actual: str) -> s
     return f"SUCCESS: Bug logged as {bug_id} in {bugs_file.name}"
 
 @tool
-def visual_browser_tester(url: str, action: str) -> str:
+def visual_browser_tester(url: str, action: str = "inspect") -> str:
     """
-    Simulates a browser interacting with the UI.
-    Fetches the HTML DOM of the page to verify elements are rendering.
+    Verifies a web route using headless Playwright (if available) or HTTP DOM inspection,
+    capturing page title, console errors, and rendered DOM snippet.
     """
+    output_dir = get_output_dir()
+    # 1. Try headless Playwright via Python or Node if URL is reachable
     try:
-        # We use a simple HTTP GET to simulate browser fetching the page
         headers = {"User-Agent": "Mozilla/5.0 QA-Agent-Browser"}
-        res = requests.get(url, headers=headers, timeout=15)
-        
-        # Extract the title and a snippet of the body to simulate DOM inspection
+        res = requests.get(url, headers=headers, timeout=10)
         import re
-        title_match = re.search(r'<title>(.*?)</title>', res.text, re.IGNORECASE)
-        title = title_match.group(1) if title_match else "No Title Found"
-        
-        body_snippet = res.text[:2000] # Return first 2000 chars as a proxy
-        
-        return f"BROWSER_ACTION '{action}' on {url} SUCCESS.\nPage Title: {title}\nDOM Snippet: {body_snippet}..."
+        title_match = re.search(r"<title>(.*?)</title>", res.text, re.IGNORECASE | re.DOTALL)
+        title = title_match.group(1).strip() if title_match else "No Title Found"
+
+        # If @playwright/test or playwright is installed in the project, run a quick headless console/pageerror check
+        if (output_dir / "node_modules" / "playwright").exists() or (output_dir / "node_modules" / "@playwright").exists():
+            from agents.src.shared.proc import run_command_safe
+            pw_script = (
+                "const { chromium } = require('playwright');"
+                "(async () => {"
+                "  const b = await chromium.launch({ headless: true });"
+                "  const p = await b.newPage();"
+                "  const errs = [];"
+                "  p.on('pageerror', e => errs.push(String(e)));"
+                "  p.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });"
+                f"  await p.goto({url!r}, {{ waitUntil: 'domcontentloaded', timeout: 10000 }});"
+                "  const t = await p.title();"
+                "  await b.close();"
+                "  console.log(JSON.stringify({ title: t, errors: errs }));"
+                "})().catch(e => { console.error(String(e)); process.exit(1); });"
+            )
+            rc, out, err, timed_out = run_command_safe(f'node -e "{pw_script}"', output_dir, timeout=20)
+            if not timed_out and rc == 0 and out.strip():
+                return f"BROWSER_ACTION '{action}' on {url} (Playwright Headless) SUCCESS.\nResult: {out.strip()[:1500]}"
+
+        body_snippet = res.text[:2000]
+        return (
+            f"BROWSER_ACTION '{action}' on {url} (HTTP status {res.status_code}) SUCCESS.\n"
+            f"Page Title: {title}\nDOM Snippet: {body_snippet}"
+        )
     except Exception as e:
         return f"BROWSER_TEST_FAILED: Could not reach {url}. Error: {e}"

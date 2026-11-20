@@ -15,25 +15,77 @@ from agents.src.shared.tools import run_terminal_command  # noqa: F401
 from agents.src.shared.workspace import get_output_dir
 
 
+_SKIP_DIRS = {"node_modules", ".git", "target", "build", "dist", ".next", "__pycache__", ".venv", "venv"}
+_CODE_EXTS = {".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".kt", ".go", ".rs", ".cs", ".cpp", ".h", ".sql", ".html", ".css"}
+
+
 @tool
 def run_complexity_analysis() -> str:
     """
-    Simulates running a static analysis tool over the generated output directory.
-    Checks for code complexity, duplicated code, or large files.
+    Cross-platform static analysis & git diff summary over the generated project workspace.
+    Computes file counts, line counts, large files (>400 LOC), unfinished TODO/FIXME markers,
+    and git diff statistics if a git repository is initialized.
     """
+    import re
+    from agents.src.shared.proc import run_command_safe
+
     output_dir = get_output_dir()
     if not output_dir.exists():
         return "ANALYSIS_FAILED: No output directory found to analyze."
-        
+
     try:
-        # A simple file count and line count for now, plus any python/node specific tools if available
-        res = subprocess.run(
-            "find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | wc -l",
-            shell=True, cwd=str(output_dir), capture_output=True, text=True, encoding="utf-8", errors="replace"
-        )
-        file_count = res.stdout.strip()
-        
-        return f"ANALYSIS_SUCCESS: {file_count} files analyzed. Cyclomatic complexity is within acceptable bounds. No major code smells detected."
+        total_files = 0
+        total_lines = 0
+        large_files: list[str] = []
+        placeholder_hits: list[str] = []
+
+        for p in sorted(output_dir.rglob("*")):
+            if not p.is_file() or p.suffix.lower() not in _CODE_EXTS:
+                continue
+            try:
+                rel = p.relative_to(output_dir)
+            except ValueError:
+                continue
+            if _SKIP_DIRS.intersection(rel.parts):
+                continue
+
+            total_files += 1
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            lines = text.splitlines()
+            loc = len(lines)
+            total_lines += loc
+            if loc > 400:
+                large_files.append(f"{rel} ({loc} LOC)")
+
+            for idx, line in enumerate(lines, 1):
+                if re.search(r"\b(TODO|FIXME|NotImplementedError|pass\s*#\s*todo)\b", line, re.IGNORECASE):
+                    placeholder_hits.append(f"{rel}:{idx}: {line.strip()[:80]}")
+                    if len(placeholder_hits) >= 15:
+                        break
+
+        git_summary = "No git repository initialized in workspace."
+        if (output_dir / ".git").exists():
+            rc, out, _, timed_out = run_command_safe("git status --short", output_dir, timeout=10)
+            rc_d, out_d, _, _ = run_command_safe("git diff --stat HEAD", output_dir, timeout=10)
+            parts = []
+            if not timed_out and rc == 0 and out.strip():
+                parts.append("Working Tree Status:\n" + out.strip()[:800])
+            if rc_d == 0 and out_d.strip():
+                parts.append("Git Diff Stat:\n" + out_d.strip()[:800])
+            if parts:
+                git_summary = "\n\n".join(parts)
+
+        report_lines = [
+            f"ANALYSIS_SUCCESS: {total_files} source files analyzed ({total_lines} total LOC).",
+            f"Large files (>400 LOC): {', '.join(large_files) if large_files else 'None'}",
+            f"Unfinished TODO/FIXME markers ({len(placeholder_hits)}): "
+            + ("\n  - " + "\n  - ".join(placeholder_hits) if placeholder_hits else "None"),
+            f"\n{git_summary}",
+        ]
+        return "\n".join(report_lines)
     except Exception as e:
         return f"ANALYSIS_FAILED: {e}"
 
