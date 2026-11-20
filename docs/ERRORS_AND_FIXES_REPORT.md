@@ -1,0 +1,47 @@
+# Multi-Agent SDLC — Errors & Fixes Report
+
+**Date**: 2026-11-20  
+**Scope**: Full-stack audit & remediation across LangGraph Orchestrator/Subgraphs (`agents/`), FastAPI Control Plane & WebSockets (`backend/`), and Next.js Dashboard (`frontend/`).
+
+---
+
+## Summary of Issues Found & Fixed
+
+| # | Category | Severity | Error / Root Cause | Fix Implemented | Files Modified |
+| :- | :--- | :--- | :--- | :--- | :--- |
+| 1 | **Planning & Chat** | Critical | `frontend/src/lib/api.ts` sent `feed_back` while `HumanApprovalSubmit` expected `feedback`, silently dropping all user replies to `""` and auto-approving plans/PRDs. | Added `resolved_feedback()` accepting both `feedback` and `feed_back` in backend schema and updated frontend payload. | `backend/schemas.py`, `backend/routers/approvals.py`, `frontend/src/lib/api.ts` |
+| 2 | **Planning State Graph** | Critical | `clarification_node` exited unconditionally after 1 reply (`"User answered:"`), causing greetings (`"hi"` → `"hello"`) to generate plans & PRDs. | Added deterministic `_is_non_requirement_text` guard, 2-phase `planning_qa.txt` rules, requirement promotion into `user_req`, and moved `clarification` ahead of `research`. | `agents/src/agents/planning/nodes.py`, `agents/src/agents/planning/graph.py`, `agents/src/prompts/planning_qa.txt` |
+| 3 | **Planning State Graph** | High | `clarification_node` invoked the LLM and `interrupt()` in the same node, replaying a duplicate LLM call on every resume; draft critique ran 3 loops. | Split into `clarification` (LLM only) + `ask_clarification` (pure `interrupt()` node with zero LLM calls); reduced critique cap from 3 → 2 iterations. | `agents/src/agents/planning/nodes.py`, `agents/src/agents/planning/graph.py` |
+| 4 | **Orchestrator State Graph** | High | `planning_stage` dropped `final_plan`, `constraints`, `risks`, `complexity_level`, and `project_type` before calling `pm_phase_a_stage`. | Added default-safe fields to `WorkflowState` and propagated all planning outputs into `pm_phase_a_stage`. | `agents/src/orchestrator/state.py`, `agents/src/orchestrator/graph.py` |
+| 5 | **Orchestrator State Graph** | Critical | In-memory `_subgraph_counters` dict reset to `0` on server restart, re-streaming already-consumed interrupts on multi-interrupt subgraphs. | Persisted interrupt counters in SQLite (`subgraph_interrupt_counters` table in `checkpoints.sqlite`). | `agents/src/orchestrator/graph.py` |
+| 6 | **DevOps State Graph** | Critical | `verify_health` had no outgoing edges to `mark_task_complete` or `pop_task`, terminating DevOps after its first task and skipping remaining tasks. | Added `verify_health → mark_task_complete → pop_task` edges. | `agents/src/agents/devops/graph.py` |
+| 7 | **Architect State Graph** | High | `max_iterations = 1` made `self_critique` dead code; rejecting API/Structure forced re-approving Schema; all 3 gates showed the identical full design doc. | Raised `max_iterations = 2`, added `_next_unapproved_gate()` to skip already-approved sections, and added `_extract_design_section()` to show focused sections per gate. | `agents/src/agents/architect/graph.py`, `agents/src/agents/architect/nodes.py` |
+| 8 | **Dev Subgraph Retries** | High | `backend_dev` & `frontend_dev` shared a single `iteration_count` across lint (max 3), test (max 2), and browser (max 2) checks, starving test/browser retries after 2 lint loops. | Split into independent `lint_iterations`, `test_iterations`, and `browser_iterations` counters (reset on `pop_task`) and removed dead `"END": END` edge mappings. | `agents/src/agents/backend_dev/{state,nodes,graph}.py`, `agents/src/agents/frontend_dev/{state,nodes,graph}.py` |
+| 9 | **LLM Redundancy** | High | Module-level singleton LLMs ignored `is_model_in_cooldown()`, repeatedly waiting 20–30s on `503 UNAVAILABLE` primary models on every call. | Checked `is_model_in_cooldown()` at the start of `llm_invoke_with_retry` & `llm_tool_invoke_with_retry` to skip straight to healthy fallback models. | `agents/src/shared/llm.py` |
+| 10 | **RAG / Windows Policy** | High | `rag_search` crashed with exit code 1 when Windows Application Control blocked `sentence_transformers`/`regex` native `.pyd` DLLs. | Added automatic fallback to `GoogleGenerativeAIEmbeddings("models/gemini-embedding-001")` and `FakeEmbeddings`, plus graceful error handling in `rag_search`. | `agents/src/rag/pipeline.py`, `agents/src/shared/tools.py` |
+| 11 | **Backend Telemetry & DB** | Critical | `backend/telemetry.py` crashed with `NameError: Any` and missing `async_session_maker` alias; `_save_terminal_log` omitted `agent_role` (`NOT NULL`), silently dropping all persisted terminal logs. | Added `typing` imports, exported `async_session_maker = AsyncSessionLocal`, and populated `agent_role` in `_save_terminal_log`. | `backend/telemetry.py`, `backend/database.py` |
+| 12 | **Backend Task Duplication** | Critical | `_process_node_event` inserted brand-new `Task` DB rows for every task in `workflow_tasks` on every node event (88+ duplicate rows per project). | Upserted `Task` rows by `(workflow_id, request_details)` and synced `status` from `completed_task_titles`. | `backend/orchestrator_service.py` |
+| 13 | **Backend Git Diff & Workspace** | High | `GitService.get_git_diff()` ran synchronously on the parent repo (`.`) instead of the project folder; `workspace.py` used global env vars unsafe for concurrent projects; greeting folders stayed named `projects/hi-*`. | Scoped `GitService` to each project's `.git` dir via `asyncio.to_thread`, added `ContextVar` isolation in `workspace.py`, and auto-migrated empty greeting folders once a real requirement is submitted. | `backend/orchestrator_service.py`, `backend/routers/files.py`, `agents/src/shared/workspace.py` |
+| 14 | **Security (Path Traversal)** | High | `GET /files/content` read arbitrary host files (e.g. `.env`) if `os.path.exists(path)` matched before scoping to `proj_dir`. | Enforced strict `Path.resolve().is_relative_to(allowed_root)` check returning HTTP `403` for out-of-workspace paths. | `backend/routers/files.py` |
+| 15 | **Backend Documents Router** | High | `documents.py` contained duplicate unused `document_processor` imports, dead `LLM_MODEL`/`LLM_PROVIDER` lines inside the loop, and omitted `plan` docs & saved `.md` artifacts. | Removed dead code, included `plan` in classification, and merged workspace `.md` artifacts alongside DB approval records. | `backend/routers/documents.py` |
+| 16 | **WebSocket Layer** | High | Duplicate 12KB chat messages on `HUMAN_INTERRUPT`; sequential WS sends blocked other tabs; early events dropped before WS connected; duplicate unreachable WS branches. | Broadcasts concise status note instead of repeating card body; parallelized `ws_manager.broadcast` with `asyncio.gather` + 5s timeout; added 15-event per-project connect replay buffer; removed dead WS branches. | `backend/websocket_manager.py`, `backend/orchestrator_service.py`, `frontend/src/lib/realWorkflow.ts` |
+| 17 | **UI: Approval Hydration Bug** | Critical | `realWorkflow.ts` called `getProjectApprovals` twice; the 2nd call overwrote `clarifying_questions` type to `'clarification'`, breaking the chat input/approval bar logic on refresh. | Removed the redundant 2nd `getProjectApprovals` block. | `frontend/src/lib/realWorkflow.ts` |
+| 18 | **UI: Missing Patches** | Critical / High | Documents tab unwired (`setDocuments` never called); Diff Viewer unwired (`setDiffs` & `GIT_DIFF` never handled); Subgraph Panel never opened (`setActiveSubgraph` never given definitions); `AgentStateIndicator` never updated; stale tabs persisted across projects & overwrites; Settings icon dead; `totalPhases` hardcoded to `6`; 10s polling ran in background tabs. | Wired Documents API + dedicated `mode="docs"` panel, unified Git Diff parser + Diff tab empty state, all 12 agent subgraph topologies in `graphData.ts`, live `setActiveAgent` updates, `updateFileContent` auto-refresh on `FILE_CHANGE`, `resetAll()` on project switch, Settings runtime popover, `totalPhases: 13`, and `document.hidden` polling guard. | `frontend/src/lib/{api,graphData,realWorkflow}.ts`, `frontend/src/store/projectViewStore.ts`, `frontend/src/components/layout/{MainLayout,Header,Sidebar}.tsx`, `frontend/src/components/project/ProjectPanel.tsx`, `frontend/src/app/dashboard/page.tsx` |
+
+---
+
+## Verification Results
+
+1. **Backend & Agent Graph Automated Tests**: Passed (`ALL BACKEND & AGENT PATCH VERIFICATIONS PASSED!`)
+   - DevOps edges (`verify_health → mark_task_complete → pop_task`) verified.
+   - Architect `max_iterations = 2`, skip-already-approved routing, and per-section extraction verified.
+   - Independent lint / test / browser retry counters in `backend_dev` & `frontend_dev` verified.
+   - SQLite persisted subgraph interrupt counter verified across in-memory cache clears.
+   - Planning greeting guard (`"hi"` → `"hello"` → `""` → `"how are you"` → real requirement) & zero-replay `ask_clarification` verified.
+   - LLM cooldown fast-skip verified (`0` invocations to rate-limited primary model).
+   - Path traversal protection verified (`HTTP 403` on `?path=.env&project_id=11`).
+   - WebSocket early-event ring buffer verified.
+2. **Frontend TypeScript Compiler (`tsc --noEmit`)**: Passed with **0 errors**.
+3. **Live Runtime Smoke Checks**:
+   - Backend API (`http://localhost:8001`): `HEALTHY`, `GET /documents/project/11` returning project documents cleanly.
+   - Frontend Dashboard (`http://localhost:3001/dashboard`): `HTTP 200`.
