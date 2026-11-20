@@ -27,7 +27,8 @@ Knowledge Base / RAG Results:
 {previous_draft}
 
 --- FEEDBACK & REVISION NOTES ---
-If there are any notes below, you MUST heavily revise your previous design draft above to address them. 
+If there are any notes below, revise ONLY the parts requested while PRESERVING all other approved specifications (existing endpoints, request/response schemas, status codes, and auth scheme such as BearerAuth must NOT be dropped or altered unless explicitly asked).
+Ensure every screen/route in the PRD (e.g. both `/login` and `/register` if auth is included) has a matching file in the Frontend Directory Structure.
 CRITICAL RULE: User feedback strictly OVERRIDES any contradictory information in the PRD, Project Constraints, or past drafts. If the user asks for a specific tech stack or modification (e.g. "use python" or "add user roles"), you MUST modify the previous design draft above accordingly.
 Self-Critique Notes: {self_critique}
 Database Schema Feedback: {schema_feedback}

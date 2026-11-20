@@ -42,7 +42,7 @@ def create_jira_epic(
     user_email = os.getenv("JIRA_USER_EMAIL")
     api_token = os.getenv("JIRA_API_TOKEN")
 
-    if not all([jira_url, user_email, api_token]):
+    if not jira_url or not user_email or not api_token:
         raise ValueError("Missing Jira credentials in environment variables.")
 
     jira = JIRA(server=jira_url, basic_auth=(user_email, api_token))
@@ -88,7 +88,7 @@ def create_jira_tickets(
     user_email = os.getenv("JIRA_USER_EMAIL")
     api_token = os.getenv("JIRA_API_TOKEN")
 
-    if not all([jira_url, user_email, api_token]):
+    if not jira_url or not user_email or not api_token:
         raise ValueError("Missing Jira credentials in environment variables.")
 
     jira = JIRA(server=jira_url, basic_auth=(user_email, api_token))
@@ -151,8 +151,13 @@ def create_slack_channel(channel_name: str) -> dict:
         }
     except SlackApiError as e:
         if e.response["error"] == "name_taken":
-            # If taken, return the existing channel info by looking it up, or just fallback
-            # For simplicity, returning error string in dict
+            try:
+                listed = client.conversations_list(types="public_channel,private_channel", limit=200)
+                for ch in listed.get("channels", []):
+                    if ch.get("name") == channel_name:
+                        return {"channel_id": ch["id"], "channel_name": ch["name"]}
+            except Exception:
+                pass
             return {"error": f"Channel name {channel_name} is already taken.", "channel_name": channel_name}
         raise RuntimeError(f"Failed to create Slack channel: {e.response['error']}")
 

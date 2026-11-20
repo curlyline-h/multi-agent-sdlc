@@ -293,9 +293,11 @@ def user_approval_node(state: PlanningState) -> dict:
     Pauses the graph and presents the draft to the human user via the UI.
     The user can either approve (returns empty string) or provide feedback.
     """
+    import re as _re
+    display_draft = _re.sub(r"\s*```json[\s\S]*?```\s*$", "", state.plan_draft or "").strip()
     user_response = interrupt({
         "type": "plan_approval",
-        "draft": state.plan_draft,
+        "draft": display_draft,
         "message": (
             "The Planning Agent has produced a feasibility brief. "
             "Please review it and either approve or provide feedback for revision."

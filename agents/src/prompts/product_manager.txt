@@ -23,14 +23,14 @@ Output a structured Markdown document with the following dense sections:
 1. **Overview & Goals**:
    - 2-3 bullet points defining the core problem, user benefits, and KPI metrics.
 
-2. **Personas (Compact)**:
+2. **Personas**:
    - Format: `[Persona Name]: [1-sentence goal/workflow]`.
 
-3. **User Stories & Epics (Dense List)**:
+3. **User Stories & Epics**:
    - Format: `* [Epic/Feature] As a [user], I want [goal] so that [reason].`
    - Inline ACs: `  - AC: [1] Given-When-Then [2] Given-When-Then [3] Given-When-Then`. Do not use line breaks for every Gherkin step.
 
-4. **Functional Specs (Bullet Tree)**:
+4. **Functional Specs**:
    - Dense nested list of core screens/components and their explicit backend rules/validations.
    - Inline Error Handling: `* [Action] -> Success: [Result], Error: [Fallback]`.
 
