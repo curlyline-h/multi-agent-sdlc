@@ -502,27 +502,32 @@ def llm_invoke_with_retry(
     Gemini models -> Groq models -> Ollama on rate-limits, 503/504, or model errors.
     """
     last_error: Optional[Exception] = None
-    target = llm.with_structured_output(structured_schema) if structured_schema else llm
+    base_cur = getattr(llm, "bound", llm)
+    primary_prov = _provider_of(base_cur)
+    primary_model = _model_name_of(base_cur)
 
-    for attempt in range(max_retries + 1):
-        try:
-            res = target.invoke(prompt)
-            _normalize_ai_response(res)
-            _log_token_usage(res, label=label)
-            return res
-        except Exception as e:
-            last_error = e
-            err = str(e).lower()
-            if _is_rate_or_token_limit(err) or _is_model_error_or_unavailable(err):
-                # Shift immediately to next model in fallback chain and place this model on cooldown
-                base_cur = getattr(llm, "bound", llm)
-                mark_model_rate_limited(_provider_of(base_cur), _model_name_of(base_cur), str(e))
-                print(f"[{label}] {_model_name_of(llm)} unavailable/rate-limited ({str(e)[:100]}). Shifting to fallback...")
-                break
-            elif any(code in err for code in _TRANSIENT_HTTP_ERRORS) and attempt < max_retries:
-                time.sleep(base_wait)
-            else:
-                break
+    if is_model_in_cooldown(primary_prov, primary_model):
+        print(f"[{label}] Primary {primary_model} is in cooldown — skipping straight to fallback chain...")
+    else:
+        target = llm.with_structured_output(structured_schema) if structured_schema else llm
+        for attempt in range(max_retries + 1):
+            try:
+                res = target.invoke(prompt)
+                _normalize_ai_response(res)
+                _log_token_usage(res, label=label)
+                return res
+            except Exception as e:
+                last_error = e
+                err = str(e).lower()
+                if _is_rate_or_token_limit(err) or _is_model_error_or_unavailable(err):
+                    # Shift immediately to next model in fallback chain and place this model on cooldown
+                    mark_model_rate_limited(primary_prov, primary_model, str(e))
+                    print(f"[{label}] {primary_model} unavailable/rate-limited ({str(e)[:100]}). Shifting to fallback...")
+                    break
+                elif any(code in err for code in _TRANSIENT_HTTP_ERRORS) and attempt < max_retries:
+                    time.sleep(base_wait)
+                else:
+                    break
 
     base_llm = getattr(llm, "bound", llm)
     for fb in get_fallback_chain(base_llm):
@@ -567,41 +572,47 @@ def llm_tool_invoke_with_retry(
         messages[:] = [messages[0], messages[1]] + messages[-10:]
 
     last_error: Optional[Exception] = None
-    for attempt in range(max_retries):
-        try:
-            res = llm_with_tools.invoke(messages)
-            _normalize_ai_response(res)
-            _log_token_usage(res, label=agent_name)
-            return res
-        except Exception as e:
-            last_error = e
-            err = str(e).lower()
-            if "tool_use_failed" in err or "attempted to call tool" in err:
-                print(f"[{agent_name}] Tool formatting error from LLM. Extracting payload if present...")
-                error_str = str(e)
-                try:
-                    match = re.search(r"'failed_generation':\s*('|\")(.*)('|\")\s*\}\s*\}", error_str, re.DOTALL)
-                    if match:
-                        raw_json_str = match.group(2).replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
-                        return AIMessage(content=f"```json\n{raw_json_str}\n```")
-                except Exception:
-                    pass
-                messages.append(HumanMessage(
-                    content="SYSTEM NOTICE: Do not output markdown code blocks or hallucinated tools like 'json'. You must strictly invoke one of the provided function tools directly."
-                ))
-                time.sleep(1)
-                continue
-            elif _is_rate_or_token_limit(err) or _is_model_error_or_unavailable(err):
-                if len(messages) > 4:
-                    messages[:] = [messages[0], messages[1]] + messages[-2:]
-                base_cur = getattr(llm_with_tools, "bound", llm_with_tools)
-                mark_model_rate_limited(_provider_of(base_cur), _model_name_of(base_cur), str(e))
-                print(f"[{agent_name}] Rate-limited/unavailable ({str(e)[:90]}). Rotating to next model...")
-                break
-            elif any(code in err for code in _TRANSIENT_HTTP_ERRORS):
-                time.sleep(base_wait)
-            else:
-                break
+    base_cur = getattr(llm_with_tools, "bound", llm_with_tools)
+    primary_prov = _provider_of(base_cur)
+    primary_model = _model_name_of(base_cur)
+
+    if is_model_in_cooldown(primary_prov, primary_model):
+        print(f"[{agent_name}] Primary {primary_model} is in cooldown — skipping straight to fallback chain...")
+    else:
+        for attempt in range(max_retries):
+            try:
+                res = llm_with_tools.invoke(messages)
+                _normalize_ai_response(res)
+                _log_token_usage(res, label=agent_name)
+                return res
+            except Exception as e:
+                last_error = e
+                err = str(e).lower()
+                if "tool_use_failed" in err or "attempted to call tool" in err:
+                    print(f"[{agent_name}] Tool formatting error from LLM. Extracting payload if present...")
+                    error_str = str(e)
+                    try:
+                        match = re.search(r"'failed_generation':\s*('|\")(.*)('|\")\s*\}\s*\}", error_str, re.DOTALL)
+                        if match:
+                            raw_json_str = match.group(2).replace("\\n", "\n").replace('\\"', '"').replace("\\'", "'")
+                            return AIMessage(content=f"```json\n{raw_json_str}\n```")
+                    except Exception:
+                        pass
+                    messages.append(HumanMessage(
+                        content="SYSTEM NOTICE: Do not output markdown code blocks or hallucinated tools like 'json'. You must strictly invoke one of the provided function tools directly."
+                    ))
+                    time.sleep(1)
+                    continue
+                elif _is_rate_or_token_limit(err) or _is_model_error_or_unavailable(err):
+                    if len(messages) > 4:
+                        messages[:] = [messages[0], messages[1]] + messages[-2:]
+                    mark_model_rate_limited(primary_prov, primary_model, str(e))
+                    print(f"[{agent_name}] Rate-limited/unavailable ({str(e)[:90]}). Rotating to next model...")
+                    break
+                elif any(code in err for code in _TRANSIENT_HTTP_ERRORS):
+                    time.sleep(base_wait)
+                else:
+                    break
 
     bound = getattr(llm_with_tools, "bound", llm_with_tools)
     bound_tools = tools or getattr(llm_with_tools, "kwargs", {}).get("tools")

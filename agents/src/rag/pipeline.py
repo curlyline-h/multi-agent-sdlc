@@ -1,7 +1,6 @@
 from typing import List, Optional
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_huggingface import HuggingFaceEmbeddings
 
 # Import modular pipeline components
 from agents.src.rag.document_processor import DocumentProcessor
@@ -12,17 +11,26 @@ from agents.src.rag.hybrid_retriever import HybridRetrieverManager
 # ---------------------------------------------------------------------------
 # Cached embeddings instance (loaded once, reused across calls)
 # ---------------------------------------------------------------------------
-_embeddings_instance: Optional[HuggingFaceEmbeddings] = None
+_embeddings_instance: Optional[Embeddings] = None
 
 
-def _get_embeddings() -> HuggingFaceEmbeddings:
+def _get_embeddings() -> Embeddings:
     global _embeddings_instance
     if _embeddings_instance is None:
-        _embeddings_instance = HuggingFaceEmbeddings(
-            model_name="all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
+        try:
+            from langchain_huggingface import HuggingFaceEmbeddings
+            _embeddings_instance = HuggingFaceEmbeddings(
+                model_name="all-MiniLM-L6-v2",
+                model_kwargs={"device": "cpu"},
+                encode_kwargs={"normalize_embeddings": True},
+            )
+        except Exception:
+            try:
+                from langchain_google_genai import GoogleGenerativeAIEmbeddings
+                _embeddings_instance = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+            except Exception:
+                from langchain_core.embeddings import FakeEmbeddings
+                _embeddings_instance = FakeEmbeddings(size=384)
     return _embeddings_instance
 
 
