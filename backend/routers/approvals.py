@@ -52,16 +52,21 @@ async def respond_to_approval(
     if not project:
         raise HTTPException(status_code=404, detail="Project associated with approval not found")
 
-    feedback_text = payload.feedback or ""
+    feedback_text = payload.resolved_feedback()
 
     # Immediately mark approval as processed in DB
     approval.status = "APPROVED" if not feedback_text or feedback_text.lower() in ["approve", "yes", "ok"] else "FEEDBACK_SUBMITTED"
     approval.feed_back = feedback_text if feedback_text else "Approved"
 
-    # If initial project description was short/greeting, update project.description in DB with user's detailed requirement
+    # If initial project description was short/greeting, update project.description in DB only when user gives a real requirement
     if project and feedback_text:
         desc_lower = (project.description or "").strip().lower()
-        if len(desc_lower) < 15 or desc_lower in ["hi", "hiiiii", "hello", "hey"]:
+        fb_lower = feedback_text.strip().lower()
+        greeting_words = {
+            "hi", "hii", "hiii", "hiiiii", "hello", "hey", "hi there", "hello there",
+            "hey there", "how are you", "ok", "okay", "yes", "no", "approve", "approved",
+        }
+        if (len(desc_lower) < 15 or desc_lower in greeting_words) and fb_lower not in greeting_words and len(fb_lower) >= 10:
             project.description = feedback_text
 
     await db.commit()

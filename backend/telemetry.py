@@ -1,3 +1,4 @@
+from typing import Any, Optional
 import datetime
 import logging
 import concurrent.futures
@@ -70,7 +71,7 @@ async def _save_tool_log(project_id: str, tool_name: str, msg: str, agent_role: 
             db.add(log_entry)
             await db.commit()
 
-async def _save_terminal_log(project_id: str, payload_extra: dict):
+async def _save_terminal_log(project_id: str, payload_extra: dict, agent_role: str = ""):
     proj_int = _safe_project_id(project_id)
     if proj_int is None:
         return
@@ -81,12 +82,14 @@ async def _save_terminal_log(project_id: str, payload_extra: dict):
         stmt = select(Workflow).where(Workflow.project_id == proj_int)
         wf = (await db.execute(stmt)).scalars().first()
         if wf:
+            effective_role = agent_role or get_active_agent_role() or wf.next_agent or wf.current_state or "agent"
             cmd = payload_extra.get("command", "")
             stdout = payload_extra.get("stdout", "")
             stderr = payload_extra.get("stderr", "")
             exit_code = payload_extra.get("exit_code", 0)
             log_entry = CommandExecution(
                 project_id=proj_int,
+                agent_role=str(effective_role)[:100],
                 command=cmd,
                 stdout=stdout,
                 stderr=stderr,
@@ -119,12 +122,12 @@ def broadcast_tool_call(tool_name: str, details: str, event_type: str = "LOG_EMI
         if loop.is_running():
             loop.create_task(_save_tool_log(project_id, tool_name, msg, effective_role))
             if event_type == "TERMINAL_COMMAND" and payload_extra:
-                loop.create_task(_save_terminal_log(project_id, payload_extra))
+                loop.create_task(_save_terminal_log(project_id, payload_extra, effective_role))
     except RuntimeError:
         if hasattr(ws_manager, 'main_loop') and ws_manager.main_loop:
             asyncio.run_coroutine_threadsafe(_save_tool_log(project_id, tool_name, msg, effective_role), ws_manager.main_loop)
             if event_type == "TERMINAL_COMMAND" and payload_extra:
-                asyncio.run_coroutine_threadsafe(_save_terminal_log(project_id, payload_extra), ws_manager.main_loop)
+                asyncio.run_coroutine_threadsafe(_save_terminal_log(project_id, payload_extra, effective_role), ws_manager.main_loop)
 
     # Extra panel specific broadcasts
     if event_type == "TERMINAL_COMMAND" and payload_extra:
@@ -164,6 +167,8 @@ def broadcast_subgraph_node(sub_node: str, thread_id: str = ""):
         "mark_task_complete": "✅ Sub-task completed successfully.",
         "pop_task": "📦 Moving to next sub-task in queue...",
         "clarification": "💬 Reviewing project requirement questions...",
+        "ask_clarification": "❓ Awaiting your reply in chat...",
+        "research": "🔎 Gathering technical context and references...",
         "generate_draft": "📝 Drafting feasibility & technical strategy...",
         "critique": "🧐 Conducting peer review & refining strategy...",
         "user_approval": "✋ Awaiting human review & approval...",
