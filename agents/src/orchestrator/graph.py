@@ -487,6 +487,8 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
         is_rejected = True
     if "security_approved" in out and not out["security_approved"]:
         is_rejected = True
+    if role_name in _CODE_WRITERS and out.get("linter_errors"):
+        is_rejected = True
 
     # Cap gate rejection loops so QA / Reviewer / Security cannot bounce indefinitely
     _GATE_PREFIXES = {
@@ -528,12 +530,23 @@ async def _execute_agent_subgraph(state: WorkflowState, subgraph, role_name: str
     if "active_pr_number" in out and out["active_pr_number"]:
         active_pr_number = out["active_pr_number"]
         
+    summary_parts = [f"{role_name} {'REJECTED' if is_rejected else 'COMPLETED'} ({len(state.active_tasks)} task(s))."]
+    if role_name == "reviewer" and out.get("code_review_comments"):
+        summary_parts.append(f"Review: {str(out['code_review_comments'])[:300]}")
+    elif role_name == "security" and out.get("security_report"):
+        summary_parts.append(f"Security: {str(out['security_report'])[:300]}")
+    elif role_name == "qa" and out.get("test_run_output"):
+        summary_parts.append(f"QA: {str(out['test_run_output']).splitlines()[0][:200]}")
+    elif out.get("linter_errors"):
+        summary_parts.append(f"Build check issues: {str(out['linter_errors'])[:200]}")
+
     return {
         "completed_task_titles": new_completed,
         "workflow_tasks": new_global_tasks,
         "active_role": "",
         "active_tasks": [],
-        "active_pr_number": active_pr_number
+        "active_pr_number": active_pr_number,
+        "summary": " ".join(summary_parts),
     }
 
 async def database_engineer_stage(state: WorkflowState) -> dict:
