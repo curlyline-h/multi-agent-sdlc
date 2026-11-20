@@ -32,7 +32,7 @@ from agents.src.shared.tools import (
 # ---------------------------------------------------------------------------
 # LLM setup
 # ---------------------------------------------------------------------------
-from agents.src.shared.llm import get_llm, llm_tool_invoke_with_retry, execute_tool_calls
+from agents.src.shared.llm import get_llm, run_tool_loop_with_json_fallback
 from pydantic import BaseModel, Field
 from typing import List
 import subprocess
@@ -87,94 +87,58 @@ def generate_deployment_plan_node(state: DevOpsState) -> dict:
         formatted += "\n\nOS RULE: The terminal is Windows cmd.exe. DO NOT use Linux commands like `mkdir -p`, `rm -rf`, or `touch`. Use Windows equivalents (e.g., `mkdir` without `-p` to create directories, `del /s /q` or `rmdir /s /q` for deletion). `mkdir` automatically creates intermediate directories in cmd."
         
     tools_list = [run_terminal_command, semantic_code_search, read_file_range, replace_file_content, list_directory, fetch_server_logs, search_web, rag_search, validate_iac_config, run_deployment, health_check_ping, push_github_actions]
-    llm_with_tools = _llm.bind_tools(tools_list)
-    
-    messages = [
+    messages: list[Any] = [
         SystemMessage(content="You are a Principal DevOps Engineer. You write deployment configs and scripts."),
         HumanMessage(content=formatted)
     ]
-    
-    # ReAct Loop
-    turn_limit = 15
-    for turn in range(turn_limit):
-        try:
-            response = llm_tool_invoke_with_retry(llm_with_tools, messages, agent_name="DevOps", tools=tools_list)
-        except Exception as e:
-            if "tool_calls" in str(e).lower() or "invalid_json" in str(e).lower():
-                import ast
-                error_str = str(e)
-                start_idx = error_str.find("'{")
-                end_idx = error_str.rfind("}'") + 2
-                if start_idx != -1 and end_idx != -1:
-                    if end_idx == -1 or end_idx <= start_idx:
-                        end_idx = error_str.rfind("'")
-                    try:
-                        raw_fg = error_str[start_idx:end_idx].replace("\\n", "\n").replace("\\'", "'")
-                        failed_gen = json.loads(raw_fg, strict=False)
-                        args = failed_gen.get("arguments", {})
-                        class DummyResponse:
-                            content = json.dumps(args) if isinstance(args, dict) else str(args)
-                            tool_calls = []
-                        response = DummyResponse()
-                    except Exception:
-                        raise e
-                else:
-                    raise e
-            else:
-                raise e
-                
-        messages.append(response)
-        
-        if not getattr(response, "tool_calls", []):
-            break
-            
-        # Check if it accidentally provided the JSON block alongside tool calls
-        if response.content and ("```json" in response.content or "terminal_commands" in response.content):
-            break
-            
-        tool_map = {tool.name: tool for tool in tools_list}
-        messages.extend(execute_tool_calls(response.tool_calls, tool_map, agent_name="DevOps"))
 
     generated_dump = []
     deployment_cmds = []
-    
+
     try:
-        # Find the content containing the JSON
-        content = ""
-        for msg in reversed(messages):
-            if hasattr(msg, "content") and isinstance(msg.content, str) and ("```json" in msg.content or "terminal_commands" in msg.content):
-                content = msg.content
-                break
-        if not content:
-            content = messages[-1].content if hasattr(messages[-1], "content") else str(messages[-1])
-            
+        content = run_tool_loop_with_json_fallback(
+            _llm,
+            tools_list,
+            messages,
+            agent_name="DevOps",
+            max_turns=8,
+            nudge_after_turn=4,
+            nudge_message=(
+                "Stop inspecting files and output your final CodeGenerationResponse JSON now "
+                'wrapped in ```json ... ```: {"terminal_commands": [...], "files": [{"path": "...", "content": "..."}]}.'
+            ),
+        )
+
         json_match = re.search(r'```(?:json)?\s*(.*?)\s*```', content, re.DOTALL)
         if not json_match:
             json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            
+
         if json_match:
             parsed = json.loads(json_match.group(1) if '```' in content else json_match.group(0))
         else:
             parsed = json.loads(content)
-            
+
         parsed_response = CodeGenerationResponse(**parsed)
-        
+
         from agents.src.shared.workspace import get_output_dir
         output_dir = get_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Terminal commands
         deployment_cmds = parsed_response.terminal_commands
         if deployment_cmds:
             generated_dump.append("Planned deployment commands:\n" + "\n".join(f"- {c}" for c in deployment_cmds))
-        
+
         # Files
         for f in parsed_response.files:
-            file_path = output_dir / f.path
+            clean_path = f.path.lstrip("/")
+            if clean_path.startswith("output/"):
+                clean_path = clean_path[7:]
+            file_path = output_dir / clean_path
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(f.content, encoding="utf-8")
-            print(f"DevOps wrote: output/{f.path}")
-            generated_dump.append(f"File: output/{f.path}\n{f.content}")
+            print(f"DevOps wrote: {clean_path}")
+            generated_dump.append(f"File: {clean_path}\n{f.content}")
             
     except Exception as e:
         print(f"JSON parsing failed: {e}")
@@ -205,7 +169,7 @@ def push_to_github_node(state: DevOpsState) -> dict:
         "scope":             "infra",
         "linter_clean":      "VALIDATION_PASSED" in (getattr(state, "iac_validation_notes", "") or ""),
     }
-    res = push_to_github(state.github_repo_name, "DevOps Agent", context=context)
+    res = push_to_github(state.github_repo_name or "", "DevOps Agent", context=context)
     return {"active_pr_number": res.get("pr_number", 0)}
 
 # ---------------------------------------------------------------------------
@@ -278,11 +242,14 @@ def execute_deployment_node(state: DevOpsState) -> dict:
                 subprocess.Popen(cmd, shell=True, cwd=str(output_dir), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 logs.append(f"SUCCESS: Started daemon '{cmd}' in background.")
             else:
-                res = subprocess.run(cmd, shell=True, cwd=str(output_dir), capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-                if res.returncode == 0:
-                    logs.append(f"SUCCESS: {cmd}\n{res.stdout[-4000:]}")
+                from agents.src.shared.proc import run_command_safe
+                rc, stdout, stderr, timed_out = run_command_safe(cmd, output_dir, timeout=180)
+                if timed_out:
+                    logs.append(f"FAILED: {cmd} timed out after 180s and was terminated.")
+                elif rc == 0:
+                    logs.append(f"SUCCESS: {cmd}\n{stdout[-4000:]}")
                 else:
-                    logs.append(f"FAILED: {cmd}\n{(res.stderr or res.stdout)[-4000:]}")
+                    logs.append(f"FAILED: {cmd}\n{(stderr or stdout)[-4000:]}")
         except Exception as e:
             logs.append(f"Error running {cmd}: {e}")
             
@@ -310,6 +277,11 @@ def pop_task_node(state: DevOpsState) -> dict:
     tasks = list(state.workflow_tasks)
     if not tasks:
         return {"current_task": None}
+    if len(tasks) > 1:
+        combined_titles = "; ".join(t.get("title", "") for t in tasks if isinstance(t, dict))
+        combined_desc = "\n".join(t.get("description", "") for t in tasks if isinstance(t, dict))
+        merged = {**tasks[0], "title": combined_titles, "description": combined_desc}
+        return {"workflow_tasks": [], "current_task": merged}
     next_task = tasks.pop(0)
     return {"workflow_tasks": tasks, "current_task": next_task}
 
