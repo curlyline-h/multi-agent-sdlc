@@ -75,6 +75,9 @@ export function Header() {
 
   const handleStopSession = async () => {
     const activeId = selectedSessionId || (typeof window !== 'undefined' ? localStorage.getItem('activeProjectId') : '') || '';
+    if (currentWorkflow?.status === 'completed') {
+      return;
+    }
     if (activeId) {
       await stopProject(activeId).catch(() => {});
     }
@@ -113,7 +116,7 @@ export function Header() {
           <span>New Project</span>
         </button>
 
-        {(selectedSessionId || currentWorkflow?.status === 'running') && (
+        {(currentWorkflow?.status === 'running' || currentWorkflow?.status === 'awaiting_approval') && (
           <button
             onClick={handleStopSession}
             className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600/90 hover:bg-red-500 text-white text-xs font-medium rounded-lg shadow-sm transition-all cursor-pointer"

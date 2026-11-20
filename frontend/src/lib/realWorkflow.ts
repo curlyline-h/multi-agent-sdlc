@@ -553,7 +553,13 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
             chatStore.setActiveAgentState('idle');
             chatStore.setActiveAgentNode(null);
           } else {
+            const prevActiveId = wfStore.currentWorkflow?.activeNodeId;
             wfStore.setActiveNode(data.stage);
+            if (data.rejected) {
+              wfStore.setNodeStatus(data.stage, 'failed');
+            } else if (prevActiveId && prevActiveId !== data.stage) {
+              // Keep previously failed gate visible until it passes on re-run
+            }
             const idx = PIPELINE_PHASES.indexOf(data.stage);
             if (idx >= 0) {
               wfStore.updatePhase(data.stage, idx + 1, PIPELINE_PHASES.length);
@@ -581,7 +587,6 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
               }
             })
             .catch(() => {});
-
           // Auto-refresh content if the modified file is currently open in a tab
           if (data.path) {
             const pv = useProjectViewStore.getState();
@@ -607,15 +612,22 @@ export function connectRealWorkflow(projectId: string): { stop: () => void } {
           if (parsed.length > 0) {
             useProjectViewStore.getState().setDiffs(parsed);
           }
-        } else if (eventType === 'TASKS_UPDATED' && Array.isArray(data.tasks)) {
-          const doneCount = Array.isArray(data.completed_task_titles) ? data.completed_task_titles.length : 0;
-          ensureTerminalSession();
-          useTerminalStore.getState().addLine(DEFAULT_TERMINAL_ID, {
-            id: `tasks-${Date.now()}`,
-            content: `[dispatcher] Task board synced: ${doneCount}/${data.tasks.length} completed`,
-            type: 'info',
-            timestamp: Date.now(),
-          });
+        } else if (eventType === 'TASKS_UPDATED') {
+          const total = typeof data.total_count === 'number' ? data.total_count : (Array.isArray(data.tasks) ? data.tasks.length : 0);
+          const done = typeof data.completed_count === 'number'
+            ? data.completed_count
+            : (Array.isArray(data.completed_task_titles)
+                ? data.completed_task_titles.length
+                : (Array.isArray(data.tasks) ? data.tasks.filter((t: any) => t.status === 'COMPLETED').length : 0));
+          if (total > 0) {
+            ensureTerminalSession();
+            useTerminalStore.getState().addLine(DEFAULT_TERMINAL_ID, {
+              id: `tasks-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              content: `[orchestrator] Task board synced: ${done}/${total} completed`,
+              type: 'info',
+              timestamp: Date.now(),
+            });
+          }
         } else if (eventType === 'ERROR' && data.message) {
           useChatStore.getState().setActiveAgentState('error');
           useChatStore.getState().addMessage({
