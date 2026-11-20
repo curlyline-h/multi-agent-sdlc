@@ -166,15 +166,32 @@ def _is_approved_response(user_response) -> bool:
     return not user_response or str(user_response).strip().lower() in _APPROVAL_TOKENS
 
 
+def _extract_design_section(draft: str, keywords: tuple[str, ...]) -> str:
+    """Extracts the matching markdown section(s) from the full system design draft."""
+    if not draft:
+        return ""
+    sections = re.split(r"(?m)(?=^#{1,3}\s+)", draft)
+    matched = [
+        sec.strip()
+        for sec in sections
+        if sec.strip() and any(kw in sec.splitlines()[0].lower() for kw in keywords)
+    ]
+    return "\n\n".join(matched) if matched else draft
+
+
 def approve_schema_node(state: ArchitectState) -> dict:
     """
     Interrupts the graph and presents ONLY the database schema section
     to the user for section-level review and approval.
     """
+    schema_draft = _extract_design_section(
+        state.system_design_draft,
+        ("schema", "database", "data model", "entity", "erd", "ecs"),
+    )
     user_response = interrupt({
         "type": "schema_approval",
         "section": "Database Schema",
-        "draft": state.system_design_draft,
+        "draft": schema_draft,
         "message": (
             "Please review the Database Schema section of the System Design. "
             "Approve it or provide specific feedback to revise this section."
@@ -188,10 +205,14 @@ def approve_api_node(state: ArchitectState) -> dict:
     Interrupts the graph and presents ONLY the API endpoints section
     to the user for section-level review and approval.
     """
+    api_draft = _extract_design_section(
+        state.system_design_draft,
+        ("api", "endpoint", "contract", "interface", "protocol", "event", "route"),
+    )
     user_response = interrupt({
         "type": "api_approval",
         "section": "API Endpoints",
-        "draft": state.system_design_draft,
+        "draft": api_draft,
         "message": (
             "Please review the API Endpoints section of the System Design. "
             "Approve it or provide specific feedback to revise this section."
@@ -205,10 +226,14 @@ def approve_structure_node(state: ArchitectState) -> dict:
     Interrupts the graph and presents ONLY the Directory Structure Blueprint
     to the user for section-level review and approval.
     """
+    structure_draft = _extract_design_section(
+        state.system_design_draft,
+        ("directory", "structure", "folder", "layout", "blueprint", "file tree", "topology"),
+    )
     user_response = interrupt({
         "type": "structure_approval",
         "section": "Directory Structure",
-        "draft": state.system_design_draft,
+        "draft": structure_draft,
         "message": (
             "Please review the Directory Structure Blueprint section. "
             "Approve it or provide specific feedback to revise this section."

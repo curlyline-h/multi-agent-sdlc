@@ -81,14 +81,87 @@ def research_node(state: PlanningState) -> dict:
 #    to wait for the user's answers if so.
 # ---------------------------------------------------------------------------
 
+_NON_REQUIREMENT_EXACT = {
+    "hi", "hii", "hiii", "hiiii", "hiiiii", "hello", "helloo", "hellooo",
+    "hey", "heyy", "heyyy", "hiya", "yo", "sup", "hola", "salam", "assalam",
+    "assalamualaikum", "asalamualaikum", "aoa", "namaste", "greetings",
+    "hi there", "hello there", "hey there", "good morning", "good afternoon",
+    "good evening", "good night", "how are you", "how r u", "whats up",
+    "what's up", "test", "testing", "ping", "ok", "okay", "k", "yes", "no",
+    "thanks", "thank you", "thx", "who are you", "what can you do", "help",
+    "approve", "approved", "proceed", "continue", "start",
+}
+
+_FILLER_WORDS = {
+    "hi", "hii", "hiii", "hiiii", "hello", "helloo", "hey", "heyy", "hiya",
+    "there", "bro", "dude", "friend", "sir", "madam", "bot", "ai", "assistant",
+    "good", "morning", "afternoon", "evening", "night", "how", "are", "you",
+    "doing", "whats", "what", "is", "up", "test", "testing", "ping", "ok",
+    "okay", "yes", "yeah", "yep", "no", "nope", "please", "thanks", "thank",
+    "can", "help", "me", "yo", "sup", "hola", "salam", "assalamualaikum",
+    "aoa", "just", "saying", "checking", "in", "who", "do", "approve",
+    "approved", "proceed", "continue", "start",
+}
+
+
+def _is_non_requirement_text(text: str) -> bool:
+    """Returns True if text is empty, purely a greeting, small talk, or lacks any software requirement."""
+    cleaned = re.sub(r"'", "", (text or "").lower())
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    if not cleaned:
+        return True
+    if cleaned in _NON_REQUIREMENT_EXACT:
+        return True
+    words = cleaned.split()
+    if len(words) <= 6 and all(w in _FILLER_WORDS for w in words):
+        return True
+    return False
+
+
+def _extract_user_answers(qa_history: str) -> list[str]:
+    """Extracts each individual user answer from the accumulated Q&A history string."""
+    if not qa_history:
+        return []
+    matches = re.findall(
+        r"User answered:[ \t]*\r?\n?(.*?)(?=(?:\r?\n)*Questions asked:|\Z)",
+        qa_history,
+        flags=re.DOTALL,
+    )
+    return [m.strip() for m in matches]
+
+
 def clarification_node(state: PlanningState) -> dict:
     """
-    Uses the LLM to decide if the requirement is ambiguous. If yes, raises
-    an interrupt so the UI can present questions to the user.
+    Uses the LLM to engage with the user and decide if a real software requirement
+    has been provided and whether follow-up questions are needed.
+    Never proceeds to drafting on greetings, small talk, or empty replies.
     """
     prompt_path = _PROMPTS_DIR / "planning_qa.txt"
-    # Never loop endlessly once the user has already answered a round of questions
-    if state.user_clarification_answers and "User answered:" in state.user_clarification_answers:
+
+    parsed_answers = _extract_user_answers(state.user_clarification_answers)
+    orig_is_real = not _is_non_requirement_text(state.user_req)
+    substantive_answers = [a for a in parsed_answers if not _is_non_requirement_text(a)]
+    has_real_requirement = orig_is_real or len(substantive_answers) > 0
+
+    # Count clarification rounds answered *after* a real project requirement was established.
+    # If the original user_req was a greeting (e.g. "hi"), the first substantive answer
+    # establishes the requirement itself and does NOT count as answering follow-up questions.
+    post_req_answers = 0
+    if has_real_requirement:
+        if orig_is_real:
+            post_req_answers = len([a for a in parsed_answers if a])
+        else:
+            # Find index of first substantive answer; count non-empty answers after it
+            first_real_idx = next(
+                (i for i, a in enumerate(parsed_answers) if not _is_non_requirement_text(a)),
+                len(parsed_answers),
+            )
+            post_req_answers = len([a for a in parsed_answers[first_real_idx + 1:] if a])
+
+    # Cap endless loops ONLY once a real requirement exists AND the user has answered
+    # at least 2 follow-up clarification rounds.
+    if has_real_requirement and post_req_answers >= 2:
         return {"clarifying_questions": []}
 
     clarify_prompt = PromptTemplate.from_template(prompt_path.read_text(encoding="utf-8"))
@@ -103,29 +176,56 @@ def clarification_node(state: PlanningState) -> dict:
     clean_content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
     clear_token = re.sub(r'[^A-Z]', '', clean_content.upper())
 
-    if clear_token == "CLEAR" or clean_content.upper().startswith("CLEAR"):
+    is_clear = clear_token == "CLEAR" or clean_content.upper().startswith("CLEAR")
+
+    # HARD GUARD: Never allow CLEAR (or drafting) if no real software requirement exists yet
+    if is_clear and has_real_requirement:
         return {"clarifying_questions": []}
 
-    # Pass the entire conversational response back to the user
-    questions = [clean_content]
-    
-    if questions:
-        # Interrupt and wait for user input via the UI
-        answers = interrupt({
-            "type": "clarifying_questions",
-            "questions": questions,
-            "message": "The Planning Agent needs answers to these questions before proceeding.",
-        })
-        answers_str = answers if isinstance(answers, str) else str(answers)
-        new_history = f"Questions asked:\n" + "\n".join(f"- {q}" for q in questions) + f"\nUser answered:\n{answers_str}\n\n"
-        accumulated_history = (state.user_clarification_answers + "\n" + new_history).strip()
-        
-        return {
-            "clarifying_questions": questions,
-            "user_clarification_answers": accumulated_history,
-        }
+    if is_clear or not clean_content:
+        clean_content = (
+            "Hello! I'm the Planning Agent. Whenever you're ready, tell me about the "
+            "software project, app, or feature you'd like to build, and I'll help you plan it out!"
+        )
 
-    return {"clarifying_questions": []}
+    # Pass the entire conversational response back to the user via ask_clarification_node
+    # (kept in a separate node so LangGraph interrupt replay never re-invokes the LLM).
+    return {"clarifying_questions": [clean_content]}
+
+
+def ask_clarification_node(state: PlanningState) -> dict:
+    """
+    Pure interrupt node (no LLM calls) that pauses to collect the user's reply
+    to the planner's greeting or clarifying questions.
+    """
+    questions = state.clarifying_questions or [
+        "Hello! I'm the Planning Agent. What software project, app, or feature would you like to build today?"
+    ]
+    answers = interrupt({
+        "type": "clarifying_questions",
+        "questions": questions,
+        "message": "The Planning Agent needs answers to these questions before proceeding.",
+    })
+    answers_str = (answers if isinstance(answers, str) else str(answers or "")).strip()
+    new_history = (
+        f"Questions asked:\n"
+        + "\n".join(f"- {q}" for q in questions)
+        + f"\nUser answered:\n{answers_str}\n\n"
+    )
+    accumulated_history = (state.user_clarification_answers + "\n" + new_history).strip()
+
+    update: dict[str, Any] = {
+        "clarifying_questions": [],
+        "user_clarification_answers": accumulated_history,
+    }
+
+    # If the initial user_req was just a greeting/non-requirement and the user has now
+    # provided an actual software requirement, promote it to user_req so downstream
+    # research, planning draft, and PRD use the real requirement instead of "hi".
+    if _is_non_requirement_text(state.user_req) and not _is_non_requirement_text(answers_str):
+        update["user_req"] = answers_str
+
+    return update
 
 
 # ---------------------------------------------------------------------------

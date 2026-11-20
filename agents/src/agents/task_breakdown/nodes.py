@@ -62,12 +62,29 @@ def generate_tasks_node(state: TaskBreakdownState) -> dict:
             
         parsed = json.loads(content)
         raw_tasks = parsed.get("tasks", [])
+        design_lower = (state.final_design_doc or "").lower()
+        no_database = "database: none" in design_lower or "**database**: none" in design_lower
+
         tasks = []
+        removed_titles: set[str] = set()
         for t in raw_tasks:
             if isinstance(t, dict):
                 role = t.get("assignee_role") or t.get("assignee") or t.get("role") or "backend"
+                if no_database and role == "database_engineer":
+                    removed_titles.add(str(t.get("title", "")))
+                    continue
                 t["assignee_role"] = role
                 tasks.append(t)
+
+        # Clean up any dependencies referencing skipped no-DB tasks or unknown titles
+        valid_titles = {str(t.get("title", "")) for t in tasks}
+        for t in tasks:
+            deps = t.get("dependencies") or []
+            if isinstance(deps, list):
+                t["dependencies"] = [
+                    d for d in deps
+                    if d in valid_titles and d != t.get("title") and d not in removed_titles
+                ]
     except Exception as e:
         tasks = [{"title": "Parse Error", "description": f"Output failed: {e}", "assignee_role": "backend", "priority": 1, "dependencies": []}]
         

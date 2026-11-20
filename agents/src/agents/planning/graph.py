@@ -24,6 +24,7 @@ from agents.src.agents.planning.state import PlanningState
 from agents.src.agents.planning.nodes import (
     research_node,
     clarification_node,
+    ask_clarification_node,
     generate_draft_node,
     critique_node,
     user_approval_node,
@@ -31,16 +32,17 @@ from agents.src.agents.planning.nodes import (
 )
 
 # ---------------------------------------------------------------------------
-# Router: Should we generate the draft based on user clarification?
+# Router: Should we ask clarifying questions or proceed to research?
 # ---------------------------------------------------------------------------
 
 
 def _should_loop_clarification(state: PlanningState) -> str:
     """
-    If the agent generated clarifying questions during this run, loop back to the node 
-    to evaluate the new answers. If the agent said CLEAR (empty questions list), proceed to draft.
+    If the agent generated clarifying questions during this run, route to the pure
+    interrupt node `ask_clarification` (avoiding LLM replay on resume).
+    If the agent said CLEAR (empty questions list), proceed to research.
     """
-    return "clarification" if state.clarifying_questions else "generate_draft"
+    return "ask_clarification" if state.clarifying_questions else "research"
 
 # ---------------------------------------------------------------------------
 # Router: Should we revise the draft based on critique?
@@ -48,10 +50,10 @@ def _should_loop_clarification(state: PlanningState) -> str:
 
 def _should_revise_after_critique(state: PlanningState) -> str:
     """
-    If the critique found issues and we haven't exceeded 3 iterations,
-    loop back to generate another draft. Otherwise proceed to user approval.
+    If the critique found issues and we haven't exceeded 2 iterations (1 draft + 1 revision),
+    loop back to generate a revised draft. Otherwise proceed to user approval.
     """
-    max_iterations = 3
+    max_iterations = 2
     has_issues = (
         state.critique_notes
         and "NO_ISSUES_FOUND" not in state.critique_notes.upper()
@@ -81,14 +83,17 @@ workflow = StateGraph(PlanningState)
 # Register nodes
 workflow.add_node("research", research_node)
 workflow.add_node("clarification", clarification_node)
+workflow.add_node("ask_clarification", ask_clarification_node)
 workflow.add_node("generate_draft", generate_draft_node)
 workflow.add_node("critique", critique_node)
 workflow.add_node("user_approval", user_approval_node)
 workflow.add_node("finalize", finalize_node)
 
-# Edges: Linear flow up to the branching points
-workflow.add_edge(START, "research")
-workflow.add_edge("research", "clarification")
+# Edges: Clarify first (so greetings/small talk never trigger research or drafting),
+# then run research on the actual clarified requirement before generating the draft.
+workflow.add_edge(START, "clarification")
+workflow.add_edge("ask_clarification", "clarification")
+workflow.add_edge("research", "generate_draft")
 workflow.add_edge("generate_draft", "critique")
 
 # Branch: Revision loop after critique
@@ -115,8 +120,8 @@ workflow.add_conditional_edges(
     "clarification",
     _should_loop_clarification,
     {
-        "generate_draft": "generate_draft",
-        "clarification": "clarification",
+        "research": "research",
+        "ask_clarification": "ask_clarification",
     },
 )
 

@@ -40,18 +40,30 @@ from agents.src.agents.architect.nodes import (
 # Router: Should we revise based on critique / validation?
 # ---------------------------------------------------------------------------
 
+def _next_unapproved_gate(state: ArchitectState) -> str:
+    """Routes to the first section that has not yet been approved by the user."""
+    if not state.schema_approved:
+        return "approve_schema"
+    if not state.api_approved:
+        return "approve_api"
+    if not state.structure_approved:
+        return "approve_structure"
+    return "finalize_design"
+
+
 def _should_revise_after_critique(state: ArchitectState) -> str:
     """
     If the self-critique or validators found significant issues and we haven't
-    exceeded 3 iterations, loop back to regenerate the draft.
+    exceeded 2 iterations (1 initial draft + 1 self-critique revision),
+    loop back to regenerate the draft. Otherwise proceed to the first unapproved section.
     """
-    max_iterations = 1
+    max_iterations = 2
     has_issues = (
         state.self_critique_notes
         and "DESIGN_COMPLETE" not in state.self_critique_notes.upper()
         and state.iteration_count < max_iterations
     )
-    return "design_draft" if has_issues else "approve_schema"
+    return "design_draft" if has_issues else _next_unapproved_gate(state)
 
 
 # ---------------------------------------------------------------------------
@@ -112,13 +124,16 @@ workflow.add_edge("research", "design_draft")
 workflow.add_edge("design_draft", "validate_design")
 workflow.add_edge("validate_design", "self_critique")
 
-# Revision loop after critique
+# Revision loop after critique (resumes at first unapproved gate, skipping already-approved sections)
 workflow.add_conditional_edges(
     "self_critique",
     _should_revise_after_critique,
     {
         "design_draft": "design_draft",
         "approve_schema": "approve_schema",
+        "approve_api": "approve_api",
+        "approve_structure": "approve_structure",
+        "finalize_design": "finalize_design",
     },
 )
 
