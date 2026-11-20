@@ -12,7 +12,7 @@ class Project(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     title = Column(String(255), nullable=True)
-    description = Column(String(1000), nullable=True)
+    description = Column(Text, nullable=True)
     path = Column(String(500), nullable=True)
     git_url = Column(String(500), nullable=True)
     current_status = Column(String(100), default="PENDING")
@@ -36,7 +36,7 @@ class Workflow(Base):
     source_branch = Column(String(255), nullable=True)
     target_branch = Column(String(255), nullable=True)
     next_agent = Column(String(100), nullable=True)
-    summary = Column(String(1000), nullable=True)
+    summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -55,7 +55,7 @@ class Task(Base):
     status = Column(String(100), default="PENDING")
     request_details = Column(Text, nullable=True)
     payload = Column(Text, nullable=True)
-    response = Column(String(4000), nullable=True)
+    response = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -71,7 +71,7 @@ class AgentLogModel(Base):
     status = Column(String(100), default="INFO")
     request_details = Column(Text, nullable=True)
     payload = Column(Text, nullable=True)
-    response = Column(String(4000), nullable=True)
+    response = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

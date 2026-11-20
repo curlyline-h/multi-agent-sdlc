@@ -81,6 +81,15 @@ class HumanApprovalResponse(BaseModel):
 
 class HumanApprovalSubmit(BaseModel):
     feedback: Optional[str] = ""
+    feed_back: Optional[str] = None
+    status: Optional[str] = None
+
+    def resolved_feedback(self) -> str:
+        if self.feedback is not None and self.feedback != "":
+            return self.feedback
+        if self.feed_back is not None and self.feed_back != "":
+            return self.feed_back
+        return ""
 
 # ── Command Execution Schemas ────────────────────────────────
 class CommandExecutionResponse(BaseModel):

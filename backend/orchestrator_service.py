@@ -1,6 +1,7 @@
 import asyncio
 import json as _json
 import logging
+import os
 from datetime import datetime
 from typing import Any, Optional
 
@@ -107,9 +108,38 @@ class OrchestratorService:
                         proj_label = user_req if (not raw_name or raw_name.lower().startswith("sdlc project")) else raw_name
 
                         from agents.src.shared.workspace import set_active_project_dir
+                        from pathlib import Path as _Path
+                        import re as _re
                         is_resuming = (resume_feedback is not None) or bool(graph_state.next)
                         existing_path = (getattr(proj_row, "path", None) or "").strip() if proj_row else ""
-                        if is_resuming and existing_path:
+                        # If the workspace was originally created from a greeting (e.g. projects/hi-4)
+                        # and is still completely empty while the user has now provided a real project description,
+                        # migrate the workspace folder to a clean slug matching the real project.
+                        _greeting_slug_re = _re.compile(r"^(hi|hii+|hello|hey|hi-there|hello-there|hey-there|project)(-\d+)?$")
+                        _existing_dir = _Path(existing_path) if existing_path else None
+                        _is_empty_greeting_dir = (
+                            _existing_dir is not None
+                            and _existing_dir.exists()
+                            and _greeting_slug_re.match(_existing_dir.name.lower()) is not None
+                            and not any(_existing_dir.iterdir())
+                        )
+                        if (
+                            is_resuming
+                            and proj_row
+                            and _is_empty_greeting_dir
+                            and len((proj_row.description or "").strip()) >= 15
+                        ):
+                            try:
+                                _existing_dir.rmdir()
+                            except OSError:
+                                pass
+                            active_project_dir = set_active_project_dir(
+                                proj_row.description,
+                                unique_if_exists=True,
+                            )
+                            proj_row.path = str(active_project_dir)
+                            await db.commit()
+                        elif is_resuming and existing_path:
                             active_project_dir = set_active_project_dir(project_dir=existing_path)
                         else:
                             active_project_dir = set_active_project_dir(
@@ -242,12 +272,9 @@ class OrchestratorService:
                                 "content": app_entry.payload
                             })
 
-                            # Also emit readable prompt/questions into the chat stream & save .md draft for review
+                            # Emit a concise status log in chat (full interactive card is already rendered by HUMAN_INTERRUPT)
                             questions_list = interrupt_payload.get("questions", []) if isinstance(interrupt_payload, dict) else []
-                            if questions_list:
-                                q_text = "\n".join(str(q) for q in questions_list)
-                                chat_msg = f"❓ **Clarification Needed:**\n{q_text}"
-                            else:
+                            if not questions_list:
                                 import re as _re
                                 from agents.src.shared.workspace import get_artifact_path
                                 safe_sec = _re.sub(r"[^a-z0-9_-]", "_", str(app_entry.request_details).lower()).strip("_") or "review"
@@ -262,20 +289,11 @@ class OrchestratorService:
                                     })
                                 except Exception as draft_err:
                                     logger.warning(f"Could not save draft markdown {draft_filename}: {draft_err}")
-                                preview = pay_load
-                                if len(preview) > 12000:
-                                    cut = preview.rfind("\n", 0, 12000)
-                                    preview = preview[: cut if cut > 0 else 12000] + f"\n\n... *(truncated — see full `{draft_filename}` in Explorer/Documents)*"
-                                chat_msg = (
-                                    f"✋ **Approval Required ({app_entry.request_details}):** "
-                                    f"Saved `{draft_filename}` in your project folder (check Explorer/Documents tab).\n\n"
-                                    f"{preview}"
-                                )
-                            await ws_manager.broadcast(str(project_id), "LOG_EMITTED", {
-                                "agent_name": "orchestrator",
-                                "message": chat_msg,
-                                "timestamp": str(datetime.utcnow())
-                            })
+                                await ws_manager.broadcast(str(project_id), "LOG_EMITTED", {
+                                    "agent_name": "orchestrator",
+                                    "message": f"✋ **Approval Required ({app_entry.request_details})** — saved `{draft_filename}` to your project folder.",
+                                    "timestamp": str(datetime.utcnow())
+                                })
 
                         elif not graph_state.next and not has_interrupts:
                             wf.status = "COMPLETED"
@@ -349,32 +367,50 @@ class OrchestratorService:
         if not isinstance(state_update, dict):
             return
 
-        # 1. Active / Workflow tasks updates
+        # 1. Active / Workflow tasks updates (upsert by workflow_id + title to avoid duplicate rows)
         if "workflow_tasks" in state_update:
+            completed_titles = set(state_update.get("completed_task_titles") or [])
+            existing_rows = (
+                await db.execute(select(Task).where(Task.workflow_id == wf.id))
+            ).scalars().all()
+            existing_by_title = {r.request_details: r for r in existing_rows}
+
             for task_data in state_update["workflow_tasks"]:
                 if isinstance(task_data, dict):
                     title = task_data.get("title", "Untitled")
-                    new_t = Task(
-                        workflow_id=wf.id,
-                        requesting_agent_id=task_data.get("assignee_role", "dispatcher"),
-                        status=task_data.get("status", "PENDING"),
-                        request_details=title,
-                        payload=task_data.get("description", "") or "",
-                        response=""
-                    )
-                    db.add(new_t)
+                    task_status = "COMPLETED" if title in completed_titles else task_data.get("status", "PENDING")
+                    if title in existing_by_title:
+                        existing_row = existing_by_title[title]
+                        existing_row.status = task_status
+                    else:
+                        new_t = Task(
+                            workflow_id=wf.id,
+                            requesting_agent_id=task_data.get("assignee_role", "dispatcher"),
+                            status=task_status,
+                            request_details=title,
+                            payload=task_data.get("description", "") or "",
+                            response=""
+                        )
+                        db.add(new_t)
+                        existing_by_title[title] = new_t
             await db.commit()
 
             await ws_manager.broadcast(str(project_id), "TASKS_UPDATED", {
-                "tasks": state_update["workflow_tasks"]
+                "tasks": state_update["workflow_tasks"],
+                "completed_task_titles": list(completed_titles),
             })
+
+        # Resolve project workspace dir for scoped git diffs
+        proj_for_diff: Any = await db.get(Project, project_id)
+        proj_dir = (getattr(proj_for_diff, "path", None) or "").strip() if proj_for_diff else ""
+        has_proj_git = bool(proj_dir and os.path.exists(os.path.join(proj_dir, ".git")))
 
         # 2. File changes
         if "final_file_changes" in state_update and state_update["final_file_changes"]:
             for fc in state_update["final_file_changes"]:
                 path = fc.get("path", str(fc)) if isinstance(fc, dict) else str(fc)
                 action = fc.get("action", "MODIFIED") if isinstance(fc, dict) else "MODIFIED"
-                diff_text = GitService.get_file_diff(path)
+                diff_text = await asyncio.to_thread(GitService.get_file_diff, path, proj_dir) if has_proj_git else ""
 
                 rec = FileRecord(
                     project_id=project_id,
@@ -433,9 +469,10 @@ class OrchestratorService:
             "timestamp": str(datetime.utcnow())
         })
 
-        # 4. Git overall diff broadcast
-        current_diff = GitService.get_git_diff()
-        if current_diff:
-            await ws_manager.broadcast(str(project_id), "GIT_DIFF", {
-                "diff": current_diff
-            })
+        # 4. Git overall diff broadcast (non-blocking, strictly scoped to the project's git repo)
+        if has_proj_git:
+            current_diff = await asyncio.to_thread(GitService.get_git_diff, proj_dir)
+            if current_diff:
+                await ws_manager.broadcast(str(project_id), "GIT_DIFF", {
+                    "diff": current_diff
+                })
