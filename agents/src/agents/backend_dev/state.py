@@ -17,6 +17,8 @@ class BackendDevState(BaseModel):
     linter_errors: str = Field(default="", description="Errors from the syntax checker")
     test_failures: str = Field(default="", description="Errors from running unit tests")
     iteration_count: int = Field(default=0, description="Times the agent looped to fix the current task")
+    lint_iterations: int = Field(default=0, description="Number of lint/build retry cycles for current task")
+    test_iterations: int = Field(default=0, description="Number of unit test retry cycles for current task")
     
     # ── Output ─────────────────────────────────────────────────────────────────
     backend_file_changes: List[Dict[str, Any]] = Field(default_factory=list, description="All backend files modified")

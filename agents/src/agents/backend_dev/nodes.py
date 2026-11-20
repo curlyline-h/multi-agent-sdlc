@@ -64,7 +64,9 @@ def pop_task_node(state: BackendDevState) -> dict:
         "current_task": next_task,
         "linter_errors": "",
         "test_failures": "",
-        "iteration_count": 0
+        "iteration_count": 0,
+        "lint_iterations": 0,
+        "test_iterations": 0,
     }
 
 from agents.src.shared.schemas import GeneratedFile, CodeGenerationResponse
@@ -258,14 +260,14 @@ def lint_code_node(state: BackendDevState) -> dict:
     if count_source_files() == 0:
         msg = "No backend source files were generated yet (only folders/docs exist). Use `write_file` to create the actual source code files."
         print(f"Backend Dev lint: FAILED ({msg})")
-        return {"linter_errors": msg}
+        return {"linter_errors": msg, "lint_iterations": state.lint_iterations + 1}
 
     passed, errors = verify_project_build(label="Backend Dev")
     if passed:
         print("Backend Dev build check: PASSED")
         return {"linter_errors": ""}
     print(f"Backend Dev build check: FAILED\n{errors}")
-    return {"linter_errors": errors}
+    return {"linter_errors": errors, "lint_iterations": state.lint_iterations + 1}
 
 # ---------------------------------------------------------------------------
 # 4. Run Tests Node
@@ -275,7 +277,9 @@ def run_tests_node(state: BackendDevState) -> dict:
     Runs the unit tests against the generated code.
     """
     result = run_unit_tests.invoke({"test_file_path": "backend/tests/test_temp.py"})
-    return {"test_failures": "" if result == "TESTS_PASSED" else result}
+    if result == "TESTS_PASSED":
+        return {"test_failures": ""}
+    return {"test_failures": result, "test_iterations": state.test_iterations + 1}
 
 # ---------------------------------------------------------------------------
 # 5. Mark Task Complete Node

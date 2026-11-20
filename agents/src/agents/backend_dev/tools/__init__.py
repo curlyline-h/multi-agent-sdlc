@@ -60,26 +60,14 @@ def code_linter(file_path: str) -> str:
     else:
         return "LINT_PASSED"
     
-    try:
-        proc = subprocess.Popen(
-            cmd, shell=True, cwd=str(output_dir),
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace",
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if hasattr(subprocess, 'CREATE_NEW_PROCESS_GROUP') else 0
-        )
-        try:
-            stdout, stderr = proc.communicate(timeout=30)
-            if proc.returncode == 0:
-                return "LINT_PASSED"
-            else:
-                errors = (stdout or stderr or "")
-                return f"LINT_FAILED:\n{errors[-2000:]}"
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate(timeout=5)
-            return "LINT_PASSED"
-    except Exception:
+    from agents.src.shared.proc import run_command_safe
+    rc, stdout, stderr, timed_out = run_command_safe(cmd, output_dir, timeout=45)
+    if timed_out:
+        return f"LINT_FAILED: '{cmd}' timed out after 45s."
+    if rc == 0:
         return "LINT_PASSED"
+    errors = (stdout or "") + ("\n" + stderr if stderr else "")
+    return f"LINT_FAILED:\n{errors.strip()[-2000:]}"
 
 
 @tool
@@ -95,33 +83,47 @@ def run_unit_tests(test_file_path: str) -> str:
     """
     output_dir = get_output_dir()
     stack = _detect_stack(output_dir)
-    
-    commands = {
-        "node": "npm test -- --watchAll=false --passWithNoTests",
-        "python": "pytest --tb=short -q",
-        "java": "mvn test -q",
-        "go": "go test ./...",
-        "rust": "cargo test",
-    }
-    
-    cmd = commands.get(stack)
-    if not cmd:
-        return "TESTS_PASSED"
-    
-    try:
-        result = subprocess.run(
-            cmd, shell=True, cwd=str(output_dir),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120
-        )
-        if result.returncode == 0:
+
+    if stack == "node":
+        import json as _json
+        pkg = output_dir / "package.json"
+        try:
+            scripts = (_json.loads(pkg.read_text(encoding="utf-8")).get("scripts") or {}) if pkg.exists() else {}
+        except Exception:
+            scripts = {}
+        test_script = str(scripts.get("test", "")).strip()
+        if not test_script or "no test specified" in test_script.lower():
             return "TESTS_PASSED"
-        else:
-            errors = result.stdout or result.stderr
-            return f"TESTS_FAILED:\n{errors[-2000:]}"
-    except subprocess.TimeoutExpired:
+        cmd = (
+            "npx --no-install vitest run --passWithNoTests"
+            if "vitest" in test_script.lower()
+            else "npm test -- --watchAll=false --passWithNoTests"
+        )
+    elif stack == "python":
+        has_py_tests = any(
+            p.is_file() and "node_modules" not in p.parts and (p.name.startswith("test_") or p.name.endswith("_test.py"))
+            for p in output_dir.rglob("*.py")
+        )
+        if not has_py_tests:
+            return "TESTS_PASSED"
+        cmd = "pytest --tb=short -q"
+    elif stack == "java":
+        cmd = "mvn -B test -q"
+    elif stack == "go":
+        cmd = "go test ./..."
+    elif stack == "rust":
+        cmd = "cargo test"
+    else:
         return "TESTS_PASSED"
-    except Exception:
+
+    from agents.src.shared.proc import run_command_safe
+    rc, stdout, stderr, timed_out = run_command_safe(cmd, output_dir, timeout=120)
+    if timed_out:
+        return f"TESTS_FAILED: '{cmd}' timed out after 120s."
+    if rc == 0:
         return "TESTS_PASSED"
+    errors = (stdout or "") + ("\n" + stderr if stderr else "")
+    return f"TESTS_FAILED:\n{errors.strip()[-2000:]}"
 
 @tool
 def db_schema_inspector(table_name: str) -> str:

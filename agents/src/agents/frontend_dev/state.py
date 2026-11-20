@@ -18,6 +18,9 @@ class FrontendDevState(BaseModel):
     test_failures: str = Field(default="", description="Errors from running component tests")
     browser_console_errors: str = Field(default="", description="React/Vue runtime errors caught by headless browser")
     iteration_count: int = Field(default=0, description="Times the agent looped to fix the current task")
+    lint_iterations: int = Field(default=0, description="Number of lint/build retry cycles for current task")
+    test_iterations: int = Field(default=0, description="Number of component test retry cycles for current task")
+    browser_iterations: int = Field(default=0, description="Number of browser check retry cycles for current task")
     
     # ── Output ─────────────────────────────────────────────────────────────────
     frontend_file_changes: List[Dict[str, Any]] = Field(default_factory=list, description="All frontend files modified")

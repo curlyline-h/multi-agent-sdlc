@@ -68,7 +68,10 @@ def pop_task_node(state: FrontendDevState) -> dict:
         "linter_errors": "",
         "test_failures": "",
         "browser_console_errors": "",
-        "iteration_count": 0
+        "iteration_count": 0,
+        "lint_iterations": 0,
+        "test_iterations": 0,
+        "browser_iterations": 0,
     }
 
 # ---------------------------------------------------------------------------
@@ -264,14 +267,14 @@ def lint_code_node(state: FrontendDevState) -> dict:
     if not has_ui_files:
         msg = "No UI source files (.tsx, .jsx, .html, .vue, .svelte, .java, .kt, .swift, .dart) were generated yet. Use `write_file` to create the actual source files."
         print(f"Frontend Dev lint: FAILED ({msg})")
-        return {"linter_errors": msg}
+        return {"linter_errors": msg, "lint_iterations": state.lint_iterations + 1}
 
     passed, errors = verify_project_build(output_dir=output_dir, label="Frontend Dev")
     if passed:
         print("Frontend Dev build check: PASSED")
         return {"linter_errors": ""}
     print(f"Frontend Dev build check: FAILED\n{errors}")
-    return {"linter_errors": errors}
+    return {"linter_errors": errors, "lint_iterations": state.lint_iterations + 1}
 
 # ---------------------------------------------------------------------------
 # 4. Run Tests Node
@@ -312,7 +315,7 @@ def run_tests_node(state: FrontendDevState) -> dict:
         )
         if res.returncode == 0:
             return {"test_failures": ""}
-        return {"test_failures": (res.stdout + res.stderr)[:2000]}
+        return {"test_failures": (res.stdout + res.stderr)[:2000], "test_iterations": state.test_iterations + 1}
     except Exception as e:
         print(f"Frontend Dev tests: skipped ({e})")
         return {"test_failures": ""}
@@ -321,22 +324,30 @@ def run_tests_node(state: FrontendDevState) -> dict:
 # 5. Browser Check Node
 # ---------------------------------------------------------------------------
 def browser_check_node(state: FrontendDevState) -> dict:
-    """Checks for obvious runtime errors by inspecting generated source files for known bad patterns."""
+    """Verifies HTML entrypoint asset links and checks generated UI files for runtime errors."""
     from agents.src.shared.workspace import get_output_dir
+    from agents.src.agents.frontend_dev.tools import visual_browser_check
+
     output_dir = get_output_dir()
     errors = []
+
+    check_res = visual_browser_check.invoke({"route_url": ""})
+    if isinstance(check_res, str) and check_res.startswith("BUILD_ERRORS:"):
+        errors.append(check_res[len("BUILD_ERRORS:"):].strip())
+
     if output_dir.exists():
-        for tsx_file in output_dir.rglob("*.tsx"):
+        for ui_file in list(output_dir.rglob("*.tsx")) + list(output_dir.rglob("*.ts")) + list(output_dir.rglob("*.jsx")):
+            if "node_modules" in ui_file.parts:
+                continue
             try:
-                content = tsx_file.read_text(encoding="utf-8", errors="replace")
-                # Flag obvious syntax errors that would cause browser crashes
+                content = ui_file.read_text(encoding="utf-8", errors="replace")
                 if "undefined is not a function" in content or "SyntaxError" in content:
-                    errors.append(f"{tsx_file.name}: possible runtime error")
+                    errors.append(f"{ui_file.name}: possible runtime error")
             except Exception:
                 pass
     if errors:
         print(f"Frontend Dev browser check: {errors}")
-        return {"browser_console_errors": "; ".join(errors)}
+        return {"browser_console_errors": "; ".join(errors)[:2000], "browser_iterations": state.browser_iterations + 1}
     print("Frontend Dev browser check: CLEAN")
     return {"browser_console_errors": ""}
 

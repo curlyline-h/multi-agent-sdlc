@@ -38,8 +38,8 @@ def _is_queue_empty(state: BackendDevState) -> str:
 # ---------------------------------------------------------------------------
 def _did_linter_pass(state: BackendDevState) -> str:
     """If there are linter/build errors, loop back to write_code to fix them."""
-    max_iterations = 3
-    if state.linter_errors and state.iteration_count < max_iterations:
+    max_lint_retries = 3
+    if state.linter_errors and state.lint_iterations < max_lint_retries:
         return "write_code"
     return "run_tests"
 
@@ -47,9 +47,9 @@ def _did_linter_pass(state: BackendDevState) -> str:
 # Router: Did Tests Pass?
 # ---------------------------------------------------------------------------
 def _did_tests_pass(state: BackendDevState) -> str:
-    """If there are test failures, loop back to write_code."""
-    max_iterations = 2
-    if state.test_failures and state.iteration_count < max_iterations:
+    """If there are test failures, loop back to write_code (uses its own counter)."""
+    max_test_retries = 2
+    if state.test_failures and state.test_iterations < max_test_retries:
         return "write_code"
     return "mark_task_complete"
 
@@ -74,7 +74,6 @@ workflow.add_conditional_edges(
     "pop_task",
     _is_queue_empty,
     {
-        "END": END,
         "push_to_github": "push_to_github",
         "write_code": "write_code"
     }

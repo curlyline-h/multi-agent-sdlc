@@ -39,20 +39,20 @@ def _is_queue_empty(state: FrontendDevState) -> str:
     return "push_to_github" if state.current_task is None else "write_ui_code"
 
 def _did_linter_pass(state: FrontendDevState) -> str:
-    max_iterations = 3
-    if state.linter_errors and state.iteration_count < max_iterations:
+    max_lint_retries = 3
+    if state.linter_errors and state.lint_iterations < max_lint_retries:
         return "write_ui_code"
     return "run_tests"
 
 def _did_tests_pass(state: FrontendDevState) -> str:
-    max_iterations = 2
-    if state.test_failures and state.iteration_count < max_iterations:
+    max_test_retries = 2
+    if state.test_failures and state.test_iterations < max_test_retries:
         return "write_ui_code"
     return "browser_check"
 
 def _is_console_clean(state: FrontendDevState) -> str:
-    max_iterations = 2
-    if state.browser_console_errors and state.iteration_count < max_iterations:
+    max_browser_retries = 2
+    if state.browser_console_errors and state.browser_iterations < max_browser_retries:
         return "write_ui_code"
     return "mark_task_complete"
 
@@ -77,7 +77,6 @@ workflow.add_conditional_edges(
     "pop_task",
     _is_queue_empty,
     {
-        "END": END,
         "push_to_github": "push_to_github",
         "write_ui_code": "write_ui_code"
     }
